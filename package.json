@@ -1,0 +1,83 @@
+{
+  "name": "apple-calendar-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for reading Apple Calendar events across iCloud, Google, Exchange accounts via AppleScript",
+  "type": "module",
+  "main": "build/index.js",
+  "types": "build/index.d.ts",
+  "bin": {
+    "apple-calendar-mcp": "build/index.js"
+  },
+  "files": [
+    "build",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc && tsc-alias",
+    "start": "node build/index.js",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
+    "format": "prettier --write src",
+    "format:check": "prettier --check src",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run lint && npm run test && npm run build",
+    "prepare": "husky && npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "apple-calendar",
+    "calendar",
+    "claude",
+    "ai",
+    "applescript",
+    "macos",
+    "model-context-protocol"
+  ],
+  "author": "Kevin May",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/scoutsolutions/apple-calendar-mcp.git"
+  },
+  "homepage": "https://github.com/scoutsolutions/apple-calendar-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/scoutsolutions/apple-calendar-mcp/issues"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "os": [
+    "darwin"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.4.1",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "@vitest/coverage-v8": "^2.1.9",
+    "eslint": "^9.0.0",
+    "globals": "^17.0.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.7",
+    "prettier": "^3.0.0",
+    "tsc-alias": "^1.8.10",
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "^5.0.0",
+    "typescript-eslint": "^8.51.0",
+    "vitest": "^2.0.0"
+  },
+  "lint-staged": {
+    "src/**/*.ts": [
+      "eslint --fix",
+      "prettier --write"
+    ]
+  }
+}
