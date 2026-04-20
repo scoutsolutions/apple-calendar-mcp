@@ -277,3 +277,61 @@ describe("buildCreateEventScript", () => {
     expect(script).toContain('summary:"say \\"hi\\""');
   });
 });
+
+describe("buildUpdateEventScript", () => {
+  it("returns null when no updates provided", () => {
+    expect(_testing.buildUpdateEventScript("uid-1", {})).toBeNull();
+  });
+
+  it("builds summary-only update", () => {
+    const script = _testing.buildUpdateEventScript("uid-1", { summary: "New title" })!;
+    expect(script).toContain('uid is "uid-1"');
+    expect(script).toContain('set summary of e to "New title"');
+    expect(script).not.toContain("set start date");
+    expect(script).not.toContain("set end date");
+    expect(script).not.toContain("set location");
+  });
+
+  it("builds reschedule update (both dates)", () => {
+    const script = _testing.buildUpdateEventScript("uid-1", {
+      startDate: "April 25, 2026 10:00 AM",
+      endDate: "April 25, 2026 11:00 AM",
+    })!;
+    expect(script).toContain('set start date of e to date "April 25, 2026 10:00 AM"');
+    expect(script).toContain('set end date of e to date "April 25, 2026 11:00 AM"');
+  });
+
+  it("clears location when empty string passed", () => {
+    const script = _testing.buildUpdateEventScript("uid-1", { location: "" })!;
+    expect(script).toContain('set location of e to ""');
+  });
+
+  it("multi-line description update uses linefeed", () => {
+    const script = _testing.buildUpdateEventScript("uid-1", { description: "a\nb" })!;
+    expect(script).toContain('set description of e to "a" & linefeed & "b"');
+  });
+
+  it("url update", () => {
+    const script = _testing.buildUpdateEventScript("uid-1", {
+      url: "https://example.com/new",
+    })!;
+    expect(script).toContain('set url of e to "https://example.com/new"');
+  });
+
+  it("combines all fields when all provided", () => {
+    const script = _testing.buildUpdateEventScript("uid-1", {
+      summary: "S",
+      startDate: "April 25, 2026 10:00 AM",
+      endDate: "April 25, 2026 11:00 AM",
+      location: "L",
+      description: "D",
+      url: "https://x.test",
+    })!;
+    expect(script).toContain("set summary of e");
+    expect(script).toContain("set start date of e");
+    expect(script).toContain("set end date of e");
+    expect(script).toContain("set location of e");
+    expect(script).toContain("set description of e");
+    expect(script).toContain("set url of e");
+  });
+});

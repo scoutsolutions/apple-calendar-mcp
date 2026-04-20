@@ -22,6 +22,7 @@ If you already have an Exchange account configured in Apple Calendar, or an iClo
 | `get-this-week` | Events for the current week (Monday-Sunday) |
 | `respond-to-invitation` | Accept/decline/tentative an event invitation. NOTE: send-behavior varies by account type. |
 | `create-event` | Create a new calendar event. NOT for Teams/Zoom meetings (see docs/TEAMS-LINKS.md). |
+| `update-event` | Modify an existing event's summary/times/location/notes/URL. |
 
 ## Write tool examples
 
@@ -78,6 +79,27 @@ create-event calendarName="Calendar" ...
 ```
 
 Run `list-calendars` to see your calendars. If two have the same name, you'll need to rename one in Calendar.app or create the event via the native app.
+
+### Rescheduling an event
+
+```
+update-event \
+  uid="abc123" \
+  startDate="April 25, 2026 10:00 AM" \
+  endDate="April 25, 2026 11:00 AM"
+```
+
+### Clearing a field
+
+Pass an empty string to clear a field. To leave a field unchanged, omit it:
+
+```
+update-event uid="abc123" location=""
+-> Removes the location
+
+update-event uid="abc123" summary="New title"
+-> Changes only the summary; location, times, etc. unchanged
+```
 
 ## Requirements
 

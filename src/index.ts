@@ -463,6 +463,55 @@ server.tool(
   )
 );
 
+// --- update-event ---
+
+server.tool(
+  "update-event",
+  {
+    uid: EVENT_UID_SCHEMA.describe("Event UID (from list-events, search-events, or get-event)"),
+    summary: EVENT_SUMMARY_SCHEMA.optional().describe("New event title (omit to leave unchanged)"),
+    startDate: STRICT_DATE_SCHEMA.optional().describe(
+      "New start time (omit to leave unchanged). If provided with endDate, endDate must be strictly after."
+    ),
+    endDate: STRICT_DATE_SCHEMA.optional().describe(
+      "New end time (omit to leave unchanged). Must be strictly after startDate if both provided."
+    ),
+    location: EVENT_LOCATION_SCHEMA.optional().describe(
+      "New location (omit to leave unchanged; empty string to clear)"
+    ),
+    description: EVENT_DESCRIPTION_SCHEMA.optional().describe(
+      "New event notes, newlines allowed (omit to leave unchanged; empty string to clear)"
+    ),
+    url: URL_SCHEMA.optional().describe("New URL, http or https only (omit to leave unchanged)"),
+  },
+  withErrorHandling(({ uid, summary, startDate, endDate, location, description, url }) => {
+    // If both dates provided, enforce ordering
+    if (startDate && endDate && new Date(startDate).getTime() >= new Date(endDate).getTime()) {
+      return successResponse("endDate must be strictly after startDate");
+    }
+    const ok = calendarManager.updateEvent(uid, {
+      summary,
+      startDate,
+      endDate,
+      location,
+      description,
+      url,
+    });
+    if (!ok) {
+      return successResponse(
+        `Failed to update event ${uid}. The event may not exist, or an AppleScript error occurred. See server logs.`
+      );
+    }
+    const changed = Object.entries({ summary, startDate, endDate, location, description, url })
+      .filter(([, v]) => v !== undefined)
+      .map(([k]) => k);
+    if (changed.length === 0) {
+      return successResponse(`No fields provided to update on event ${uid}.`);
+    }
+    return successResponse(`Updated event ${uid}. Fields changed: ${changed.join(", ")}.`);
+  }, "Error updating event")
+);
+
 // =============================================================================
 // Server Startup
 // =============================================================================
