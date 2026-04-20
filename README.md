@@ -21,6 +21,7 @@ If you already have an Exchange account configured in Apple Calendar, or an iClo
 | `get-today` | Events for today across all calendars |
 | `get-this-week` | Events for the current week (Monday-Sunday) |
 | `respond-to-invitation` | Accept/decline/tentative an event invitation. NOTE: send-behavior varies by account type. |
+| `create-event` | Create a new calendar event. NOT for Teams/Zoom meetings (see docs/TEAMS-LINKS.md). |
 
 ## Write tool examples
 
@@ -37,6 +38,46 @@ respond-to-invitation uid="abc123" status="accepted" userEmail="you@example.com"
 ```
 
 **Important:** Whether the organizer receives your response email depends on your account type. iCloud reliably sends. Exchange and Google CalDAV behavior is inconsistent - the status updates locally and on the server but may not email the organizer. If confirmation matters, follow up separately.
+
+### Creating a personal event
+
+Block time for focused work:
+
+```
+create-event \
+  calendarName="Work" \
+  summary="Deep work block" \
+  startDate="April 22, 2026 9:00 AM" \
+  endDate="April 22, 2026 11:00 AM" \
+  description="No meetings. Turning off Slack."
+```
+
+### Creating an event with a pasted meeting URL
+
+You have a Zoom link from a separate booking - paste it in the URL field:
+
+```
+create-event \
+  calendarName="Work" \
+  summary="Client sync" \
+  startDate="April 23, 2026 2:00 PM" \
+  endDate="April 23, 2026 2:30 PM" \
+  url="https://zoom.us/j/123456789" \
+  description="Quarterly check-in"
+```
+
+**Note:** This does NOT provision a new Zoom meeting - you must have obtained the URL from Zoom separately. For AI-created meetings that need a fresh meeting URL, use your calendar platform's tool (Outlook for Teams, Google Calendar for Meet).
+
+### Why the calendar name matters
+
+If you have multiple accounts in Apple Calendar (e.g., iCloud + Exchange work), the tool refuses to guess when names collide:
+
+```
+create-event calendarName="Calendar" ...
+-> "Failed to create event. Possible causes: calendar 'Calendar' doesn't exist, is read-only, or is ambiguous (duplicated across accounts)."
+```
+
+Run `list-calendars` to see your calendars. If two have the same name, you'll need to rename one in Calendar.app or create the event via the native app.
 
 ## Requirements
 

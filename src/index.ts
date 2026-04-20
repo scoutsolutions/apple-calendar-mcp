@@ -78,9 +78,6 @@ const SEARCH_QUERY_SCHEMA = z
 /** Bounded integer limit for event listing. */
 const EVENT_LIMIT_SCHEMA = z.number().int().min(1).max(500);
 
-/* eslint-disable @typescript-eslint/no-unused-vars -- schemas declared here
-   are consumed by write-tool registrations added in subsequent tasks */
-
 /** URL for event property. MUST be http or https - javascript:, file:, data:
  *  and other schemes are rejected because event URLs get rendered in
  *  various calendar clients (Outlook, Apple Calendar popovers, CalDAV
@@ -171,8 +168,6 @@ const STRICT_DATE_SCHEMA = z
     },
     { message: "Date must be within 50 years of today" }
   );
-
-/* eslint-enable @typescript-eslint/no-unused-vars */
 
 // Read version from package.json to keep it in sync
 const require = createRequire(import.meta.url);
@@ -418,6 +413,54 @@ server.tool(
     };
     return successResponse(messages[outcome]);
   }, "Error responding to invitation")
+);
+
+// --- create-event ---
+
+server.tool(
+  "create-event",
+  {
+    calendarName: CALENDAR_NAME_SCHEMA.describe(
+      "Target calendar name. Must be writable and unambiguous. Exchange's default " +
+        "'Calendar' is often duplicated across accounts - use list-calendars to confirm " +
+        "your target appears exactly once. NOTE: AppleScript cannot create Teams/Zoom/Meet " +
+        "meeting URLs. For online meetings, use Outlook or Google Calendar instead."
+    ),
+    summary: EVENT_SUMMARY_SCHEMA.describe("Event title"),
+    startDate: STRICT_DATE_SCHEMA.describe("Start time"),
+    endDate: STRICT_DATE_SCHEMA.describe("End time (must be strictly after startDate)"),
+    location: EVENT_LOCATION_SCHEMA.optional().describe("Physical or virtual location"),
+    description: EVENT_DESCRIPTION_SCHEMA.optional().describe(
+      "Event notes. Newlines allowed. For online meetings, paste the meeting URL here or in the url field."
+    ),
+    url: URL_SCHEMA.optional().describe(
+      "Event URL (http or https only). Useful for pasting a Teams/Zoom link from another source."
+    ),
+    allDay: z.boolean().optional().default(false).describe("Create as all-day event"),
+  },
+  withErrorHandling(
+    ({ calendarName, summary, startDate, endDate, location, description, url, allDay }) => {
+      // Strict date ordering (I1)
+      if (new Date(startDate).getTime() >= new Date(endDate).getTime()) {
+        return successResponse("endDate must be strictly after startDate");
+      }
+      const uid = calendarManager.createEvent(calendarName, summary, startDate, endDate, {
+        location,
+        description,
+        url,
+        allDay,
+      });
+      if (!uid) {
+        return successResponse(
+          `Failed to create event. Possible causes: calendar "${calendarName}" ` +
+            `doesn't exist, is read-only, or is ambiguous (duplicated across accounts). ` +
+            `Run list-calendars to see available options.`
+        );
+      }
+      return successResponse(`Event created. UID: ${uid}`);
+    },
+    "Error creating event"
+  )
 );
 
 // =============================================================================

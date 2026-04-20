@@ -197,3 +197,83 @@ describe("buildRespondScript", () => {
     });
   });
 });
+
+describe("buildCreateEventScript", () => {
+  it("minimal event: summary + dates only", () => {
+    const script = _testing.buildCreateEventScript(
+      "Work",
+      "Lunch",
+      "April 22, 2026 12:00 PM",
+      "April 22, 2026 1:00 PM"
+    );
+    expect(script).toContain('tell calendar "Work"');
+    expect(script).toContain('summary:"Lunch"');
+    expect(script).toContain('start date:date "April 22, 2026 12:00 PM"');
+    expect(script).toContain('end date:date "April 22, 2026 1:00 PM"');
+    expect(script).toContain("allday event:false");
+    expect(script).not.toContain("location:");
+    expect(script).not.toContain("description:");
+    expect(script).not.toContain("url:");
+  });
+
+  it("event with all optional fields", () => {
+    const script = _testing.buildCreateEventScript(
+      "Work",
+      "Meet",
+      "April 22, 2026 9:00 AM",
+      "April 22, 2026 10:00 AM",
+      {
+        location: "Conf Room A",
+        description: "single line",
+        url: "https://example.com/meet",
+        allDay: false,
+      }
+    );
+    expect(script).toContain('location:"Conf Room A"');
+    expect(script).toContain('description:"single line"');
+    expect(script).toContain('url:"https://example.com/meet"');
+  });
+
+  it("multi-line description uses linefeed concatenation", () => {
+    const script = _testing.buildCreateEventScript(
+      "Work",
+      "Meet",
+      "April 22, 2026 9:00 AM",
+      "April 22, 2026 10:00 AM",
+      { description: "line 1\nline 2\nline 3" }
+    );
+    expect(script).toContain('description:"line 1" & linefeed & "line 2" & linefeed & "line 3"');
+  });
+
+  it("CRLF description normalized to linefeed", () => {
+    const script = _testing.buildCreateEventScript(
+      "Work",
+      "Meet",
+      "April 22, 2026 9:00 AM",
+      "April 22, 2026 10:00 AM",
+      { description: "a\r\nb" }
+    );
+    expect(script).toContain('description:"a" & linefeed & "b"');
+  });
+
+  it("all-day event sets allday event:true", () => {
+    const script = _testing.buildCreateEventScript(
+      "Work",
+      "Holiday",
+      "April 22, 2026",
+      "April 22, 2026",
+      { allDay: true }
+    );
+    expect(script).toContain("allday event:true");
+  });
+
+  it("escapes quotes in summary", () => {
+    const script = _testing.buildCreateEventScript(
+      "Work",
+      'say "hi"',
+      "April 22, 2026 9:00 AM",
+      "April 22, 2026 10:00 AM"
+    );
+    expect(script).toContain('summary:"say \\"hi\\""');
+  });
+});
