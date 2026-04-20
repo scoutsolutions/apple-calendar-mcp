@@ -861,8 +861,13 @@ function buildCreateEventScript(
  *
  *  Since v0.2.2: date updates use buildAppleScriptDateBlock pre-script
  *  blocks instead of `date "..."` literals, avoiding the locale-dependent
- *  silent time-truncation bug. Date blocks are only emitted when the
- *  corresponding field is being updated. */
+ *  silent time-truncation bug.
+ *
+ *  Since v0.2.3: when BOTH startDate and endDate are updated, the setters
+ *  use a safe-floor bookend pattern to avoid AppleScript's transient
+ *  "start date must be before end date" rejection. Without this, moving
+ *  an event forward in time fails because `set start date` executes before
+ *  `set end date`, briefly leaving start > existing end. */
 function buildUpdateEventScript(
   uid: string,
   updates: {
@@ -879,18 +884,40 @@ function buildUpdateEventScript(
   const setters: string[] = [];
   const preBlocks: string[] = [];
 
+  const hasBothDates = updates.startDate !== undefined && updates.endDate !== undefined;
+
+  if (hasBothDates) {
+    // Safe-floor bookend: drop start to Jan 1 2000, set end to new end,
+    // set start to new start. Every intermediate state satisfies start<end.
+    const safeFloor = {
+      year: 2000,
+      month: 1,
+      day: 1,
+      hour: 0,
+      minute: 0,
+      second: 0,
+      dateOnly: true,
+    };
+    preBlocks.push(buildAppleScriptDateBlock(safeFloor, "safeFloorObj"));
+    preBlocks.push(
+      buildAppleScriptDateBlock(parseUserDateInput(updates.startDate!), "startDateObj")
+    );
+    preBlocks.push(buildAppleScriptDateBlock(parseUserDateInput(updates.endDate!), "endDateObj"));
+    setters.push(`set start date of e to safeFloorObj`);
+    setters.push(`set end date of e to endDateObj`);
+    setters.push(`set start date of e to startDateObj`);
+  } else if (updates.startDate !== undefined) {
+    preBlocks.push(
+      buildAppleScriptDateBlock(parseUserDateInput(updates.startDate), "startDateObj")
+    );
+    setters.push(`set start date of e to startDateObj`);
+  } else if (updates.endDate !== undefined) {
+    preBlocks.push(buildAppleScriptDateBlock(parseUserDateInput(updates.endDate), "endDateObj"));
+    setters.push(`set end date of e to endDateObj`);
+  }
+
   if (updates.summary !== undefined) {
     setters.push(`set summary of e to "${escapeForAppleScript(updates.summary)}"`);
-  }
-  if (updates.startDate !== undefined) {
-    const comp = parseUserDateInput(updates.startDate);
-    preBlocks.push(buildAppleScriptDateBlock(comp, "startDateObj"));
-    setters.push(`set start date of e to startDateObj`);
-  }
-  if (updates.endDate !== undefined) {
-    const comp = parseUserDateInput(updates.endDate);
-    preBlocks.push(buildAppleScriptDateBlock(comp, "endDateObj"));
-    setters.push(`set end date of e to endDateObj`);
   }
   if (updates.location !== undefined) {
     setters.push(`set location of e to "${escapeForAppleScript(updates.location)}"`);

@@ -4,6 +4,25 @@ All notable changes to apple-calendar-mcp are documented here. Format based on [
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-04-21
+
+Patch release fixing a latent bug in `update-event` surfaced during v0.2.2 live smoke testing. Not a regression - the same ordering issue existed in v0.2.0 and v0.2.1 but was never exercised with both dates in the same update.
+
+### Fixed
+- **`update-event` fails when both `startDate` and `endDate` are supplied.** AppleScript's Calendar integration validates `start date < end date` on every property assignment, not transactionally. The v0.2.2 (and earlier) generated script ran `set start date of e to ...` first, which briefly made start > existing end for any forward-in-time reschedule and Calendar rejected the write with "The start date must be before the end date." v0.2.3 uses a safe-floor bookend pattern:
+  1. Drop start date to Jan 1 2000 (safely before any realistic existing end)
+  2. Set end date to the new end (now start << new end, transition valid)
+  3. Set start date to the new start (now new start < new end, transition valid)
+  
+  Works for both forward and backward time moves in a single AppleScript roundtrip. Single-field updates (only startDate or only endDate) skip the bookend - those cases work with a plain setter and any start/end invariant violation reflects genuine user error.
+
+### Added
+- 2 new tests covering the safe-floor pattern (reschedule ordering, single-field skip).
+
+### Notes
+- 186 tests passing (up from 184).
+- Behavioral compatibility: any caller that was working against 0.2.2 continues to work. The fix enables a previously-failing case without changing any passing behavior.
+
 ## [0.2.2] - 2026-04-21
 
 Patch release fixing silent data corruption in `create-event` and `update-event` when dates use 24-hour or ISO format. No breaking changes to tool signatures; inputs that worked before still work, plus several previously-broken formats now work correctly.

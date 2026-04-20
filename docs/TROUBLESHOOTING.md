@@ -114,6 +114,14 @@ If you want a persistent file log, redirect stderr when launching the MCP via sh
 
 **Prevention.** v0.2.2 supports: ISO date (`2026-04-21`), ISO datetime without offset (`2026-04-21T15:00:00` or `2026-04-21 15:00:00`), natural language (`April 21, 2026 15:00:00` or `April 21, 2026 3:00 PM`), and US slash (`4/21/2026`). Explicitly rejected: ISO with `Z` or `±HH:mm` offset - convert to local wall-clock time first.
 
+## "The start date must be before the end date" on update-event (pre-0.2.3)
+
+**Symptom.** `update-event` with both `startDate` and `endDate` returns a failure message; server logs show an AppleScript error: `The start date must be before the end date`. Common case: rescheduling a meeting forward in time.
+
+**Cause.** AppleScript validates `start < end` on every individual property assignment, not transactionally. Pre-0.2.3, the generated script ran `set start date of e to ...` first, which briefly left start > existing end for any forward-in-time reschedule. Calendar rejects.
+
+**Resolution.** Upgrade to v0.2.3 or later. The fix uses a safe-floor bookend pattern that handles both forward and backward time moves correctly. No caller change needed.
+
 ## "Timezone-qualified dates are not supported"
 
 **Symptom.** `create-event` or `update-event` rejects an input like `"2026-04-21T15:00:00Z"` or `"2026-04-21T15:00:00+05:00"` with "Timezone-qualified dates (Z or offset) are not supported."
