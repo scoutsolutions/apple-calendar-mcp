@@ -3,13 +3,16 @@
  * Apple Calendar MCP Server
  *
  * A Model Context Protocol (MCP) server that provides AI assistants with
- * read-only access to Apple Calendar events across all synced accounts
- * (iCloud, Google, Exchange, etc.).
+ * read and (as of v0.2.0) limited write access to Apple Calendar events
+ * across all synced accounts (iCloud, Google, Exchange, etc.).
  *
- * Event creation is deliberately NOT included. AppleScript-created events
- * don't get Teams/Zoom meeting links or proper server-side resources.
- * For meetings that need online-meeting integration, use a Microsoft Graph
- * or Google Calendar MCP instead.
+ * Write tools (create-event, update-event, delete-event,
+ * respond-to-invitation) are deliberately limited. AppleScript cannot
+ * provision Teams/Zoom/Meet meeting URLs, so online meetings that need
+ * a fresh meeting resource should be created via Outlook, Google
+ * Calendar, or the appropriate platform MCP.
+ *
+ * Set APPLE_CALENDAR_MCP_READ_ONLY=1 to disable write tools server-wide.
  *
  * @module apple-calendar-mcp
  * @see https://modelcontextprotocol.io
@@ -20,6 +23,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { AppleCalendarManager } from "@/services/appleCalendarManager.js";
+import { checkThrottle } from "@/utils/writeHelpers.js";
 
 // =============================================================================
 // Input Validation Schemas
@@ -78,6 +82,97 @@ const SEARCH_QUERY_SCHEMA = z
 /** Bounded integer limit for event listing. */
 const EVENT_LIMIT_SCHEMA = z.number().int().min(1).max(500);
 
+/** URL for event property. MUST be http or https - javascript:, file:, data:
+ *  and other schemes are rejected because event URLs get rendered in
+ *  various calendar clients (Outlook, Apple Calendar popovers, CalDAV
+ *  viewers) where a javascript: URL is an XSS vector. */
+const URL_SCHEMA = z
+  .string()
+  .url()
+  .max(2000)
+  .refine(
+    (u) => {
+      try {
+        const proto = new URL(u).protocol;
+        return proto === "http:" || proto === "https:";
+      } catch {
+        return false;
+      }
+    },
+    { message: "URL must use http or https scheme" }
+  );
+
+/** Email address with @ excluded from both sides (prevents a@b@c),
+ *  control chars rejected, whitespace rejected. IDN emails (non-ASCII)
+ *  are NOT supported - Apple Calendar normalizes to punycode anyway. */
+const EMAIL_SCHEMA = z
+  .string()
+  .min(3)
+  .max(320)
+  .regex(
+    // eslint-disable-next-line no-control-regex
+    /^[^\x00-\x1F\x7F\\"\s@]+@[^\x00-\x1F\x7F\\"\s@]+$/,
+    "Must be a valid ASCII email address (no whitespace, no control characters, exactly one @)"
+  );
+
+/** Participation status enum per RFC 5545. Kept as an enum (not free
+ *  string) so AppleScript constant mapping is explicit (see Task 1). */
+const PARTICIPATION_STATUS_SCHEMA = z.enum(["accepted", "declined", "tentative", "needs-action"]);
+
+/** Event summary (title). Single-line text, control chars rejected. */
+const EVENT_SUMMARY_SCHEMA = z
+  .string()
+  .min(1)
+  .max(500)
+  .regex(
+    // eslint-disable-next-line no-control-regex
+    /^[^\x00-\x1F\x7F]+$/,
+    "Event summary must not contain control characters or newlines"
+  );
+
+/** Event location. Single-line, allows empty (to clear a location). */
+const EVENT_LOCATION_SCHEMA = z
+  .string()
+  .max(500)
+  .regex(
+    // eslint-disable-next-line no-control-regex
+    /^[^\x00-\x1F\x7F]*$/,
+    "Location must not contain control characters or newlines"
+  );
+
+/** Event description. ALLOWS newlines (\n, \r\n, \r) - multi-line notes
+ *  are legitimate. Rejects all other control chars. Handled via
+ *  buildMultilineAppleScript in the service layer. */
+const EVENT_DESCRIPTION_SCHEMA = z
+  .string()
+  .max(5000)
+  .regex(
+    // eslint-disable-next-line no-control-regex
+    /^[^\x00-\x08\x0B\x0C\x0E-\x1F\x7F]*$/,
+    "Description may contain newlines but not other control characters"
+  );
+
+/** Tightened date schema. Rejects rolled-over dates ("Feb 30" -> Mar 2),
+ *  bounds to a reasonable window to prevent typos landing years away. */
+const STRICT_DATE_SCHEMA = z
+  .string()
+  .regex(
+    /^[a-zA-Z0-9 ,/\-:]+$/,
+    "Date must contain only alphanumeric characters, spaces, commas, slashes, hyphens, and colons"
+  )
+  .refine((val) => !isNaN(new Date(val).getTime()), {
+    message: "Date string must be a valid date",
+  })
+  .refine(
+    (val) => {
+      const d = new Date(val);
+      const now = Date.now();
+      const fiftyYears = 50 * 365.25 * 24 * 60 * 60 * 1000;
+      return Math.abs(d.getTime() - now) < fiftyYears;
+    },
+    { message: "Date must be within 50 years of today" }
+  );
+
 // Read version from package.json to keep it in sync
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json") as { version: string };
@@ -90,7 +185,7 @@ const server = new McpServer({
   name: "apple-calendar",
   version,
   description:
-    "MCP server for reading Apple Calendar events across iCloud, Google, Exchange accounts",
+    "MCP server for reading and writing Apple Calendar events across iCloud, Google, Exchange accounts. Write tools cannot provision Teams/Zoom/Meet meeting URLs - see docs/TEAMS-LINKS.md.",
 });
 
 const calendarManager = new AppleCalendarManager();
@@ -293,6 +388,170 @@ server.tool(
       `This week (${events.length} event(s)):\n${events.map(formatEventLine).join("\n")}`
     );
   }, "Error getting this week's events")
+);
+
+// =============================================================================
+// Calendar Tools (write - v0.2.0+)
+// =============================================================================
+
+// --- respond-to-invitation ---
+
+server.tool(
+  "respond-to-invitation",
+  {
+    uid: EVENT_UID_SCHEMA.describe("Event UID (from list-events, search-events, or get-event)"),
+    status: PARTICIPATION_STATUS_SCHEMA.describe(
+      "Your response: accepted, declined, tentative, or needs-action. NOTE: Whether the organizer receives the response email depends on account type - iCloud reliably sends, Exchange/Google behavior is inconsistent."
+    ),
+    userEmail: EMAIL_SCHEMA.describe(
+      "Your email address as it appears on the invitation (identifies you among attendees)."
+    ),
+  },
+  withErrorHandling(({ uid, status, userEmail }) => {
+    const outcome = calendarManager.respondToInvitation(uid, status, userEmail);
+    const messages: Record<typeof outcome, string> = {
+      ok: `Status updated to "${status}" on event ${uid}.`,
+      "event-not-found": `Event ${uid} not found in any calendar.`,
+      "attendee-not-found": `Your email (${userEmail}) was not found among the event's attendees.`,
+      error: `An error occurred. See server logs for details.`,
+    };
+    return successResponse(messages[outcome]);
+  }, "Error responding to invitation")
+);
+
+// --- create-event ---
+
+server.tool(
+  "create-event",
+  {
+    calendarName: CALENDAR_NAME_SCHEMA.describe(
+      "Target calendar name. Must be writable and unambiguous. Exchange's default " +
+        "'Calendar' is often duplicated across accounts - use list-calendars to confirm " +
+        "your target appears exactly once. NOTE: AppleScript cannot create Teams/Zoom/Meet " +
+        "meeting URLs. For online meetings, use Outlook or Google Calendar instead."
+    ),
+    summary: EVENT_SUMMARY_SCHEMA.describe("Event title"),
+    startDate: STRICT_DATE_SCHEMA.describe("Start time"),
+    endDate: STRICT_DATE_SCHEMA.describe("End time (must be strictly after startDate)"),
+    location: EVENT_LOCATION_SCHEMA.optional().describe("Physical or virtual location"),
+    description: EVENT_DESCRIPTION_SCHEMA.optional().describe(
+      "Event notes. Newlines allowed. For online meetings, paste the meeting URL here or in the url field."
+    ),
+    url: URL_SCHEMA.optional().describe(
+      "Event URL (http or https only). Useful for pasting a Teams/Zoom link from another source."
+    ),
+    allDay: z.boolean().optional().default(false).describe("Create as all-day event"),
+  },
+  withErrorHandling(
+    ({ calendarName, summary, startDate, endDate, location, description, url, allDay }) => {
+      // Strict date ordering (I1)
+      if (new Date(startDate).getTime() >= new Date(endDate).getTime()) {
+        return successResponse("endDate must be strictly after startDate");
+      }
+      const uid = calendarManager.createEvent(calendarName, summary, startDate, endDate, {
+        location,
+        description,
+        url,
+        allDay,
+      });
+      if (!uid) {
+        return successResponse(
+          `Failed to create event. Possible causes: calendar "${calendarName}" ` +
+            `doesn't exist, is read-only, or is ambiguous (duplicated across accounts). ` +
+            `Run list-calendars to see available options.`
+        );
+      }
+      return successResponse(`Event created. UID: ${uid}`);
+    },
+    "Error creating event"
+  )
+);
+
+// --- update-event ---
+
+server.tool(
+  "update-event",
+  {
+    uid: EVENT_UID_SCHEMA.describe("Event UID (from list-events, search-events, or get-event)"),
+    summary: EVENT_SUMMARY_SCHEMA.optional().describe("New event title (omit to leave unchanged)"),
+    startDate: STRICT_DATE_SCHEMA.optional().describe(
+      "New start time (omit to leave unchanged). If provided with endDate, endDate must be strictly after."
+    ),
+    endDate: STRICT_DATE_SCHEMA.optional().describe(
+      "New end time (omit to leave unchanged). Must be strictly after startDate if both provided."
+    ),
+    location: EVENT_LOCATION_SCHEMA.optional().describe(
+      "New location (omit to leave unchanged; empty string to clear)"
+    ),
+    description: EVENT_DESCRIPTION_SCHEMA.optional().describe(
+      "New event notes, newlines allowed (omit to leave unchanged; empty string to clear)"
+    ),
+    url: URL_SCHEMA.optional().describe("New URL, http or https only (omit to leave unchanged)"),
+  },
+  withErrorHandling(({ uid, summary, startDate, endDate, location, description, url }) => {
+    // If both dates provided, enforce ordering
+    if (startDate && endDate && new Date(startDate).getTime() >= new Date(endDate).getTime()) {
+      return successResponse("endDate must be strictly after startDate");
+    }
+    const ok = calendarManager.updateEvent(uid, {
+      summary,
+      startDate,
+      endDate,
+      location,
+      description,
+      url,
+    });
+    if (!ok) {
+      return successResponse(
+        `Failed to update event ${uid}. The event may not exist, or an AppleScript error occurred. See server logs.`
+      );
+    }
+    const changed = Object.entries({ summary, startDate, endDate, location, description, url })
+      .filter(([, v]) => v !== undefined)
+      .map(([k]) => k);
+    if (changed.length === 0) {
+      return successResponse(`No fields provided to update on event ${uid}.`);
+    }
+    return successResponse(`Updated event ${uid}. Fields changed: ${changed.join(", ")}.`);
+  }, "Error updating event")
+);
+
+// --- delete-event ---
+
+server.tool(
+  "delete-event",
+  {
+    calendarName: CALENDAR_NAME_SCHEMA.describe(
+      "Calendar containing the event. Required for safety scoping - prevents cross-calendar " +
+        "delete via prompt injection. Use list-calendars to confirm the calendar name is " +
+        "unambiguous; this tool refuses to delete from ambiguous or read-only calendars."
+    ),
+    uid: EVENT_UID_SCHEMA.describe(
+      "Event UID to delete. Refuses to delete recurring event masters - use Calendar.app for series-wide deletion."
+    ),
+  },
+  withErrorHandling(({ calendarName, uid }) => {
+    // Per-session rate limit on deletes (N1)
+    checkThrottle("delete-event", 10);
+
+    // Get event context BEFORE deleting so we can surface it in the response
+    const event = calendarManager.getEvent(uid);
+    const context = event ? ` ("${event.summary}" at ${event.startDate})` : "";
+
+    const outcome = calendarManager.deleteEvent(calendarName, uid);
+    const messages: Record<typeof outcome, string> = {
+      ok:
+        `Deleted event ${uid}${context}. Recoverability depends on account type - ` +
+        `iCloud/Google retain in trash ~30 days; Exchange goes to Deleted Items; ` +
+        `local-only calendars are permanent.`,
+      "not-found": `Event ${uid} not found in "${calendarName}" (or calendar is ambiguous/read-only).`,
+      "is-recurring-master":
+        `Event ${uid} is a recurring series master. Deleting would remove all occurrences. ` +
+        `Use Calendar.app to delete individual occurrences or confirm series-wide deletion.`,
+      error: `An error occurred. See server logs for details.`,
+    };
+    return successResponse(messages[outcome]);
+  }, "Error deleting event")
 );
 
 // =============================================================================

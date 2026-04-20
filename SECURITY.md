@@ -46,3 +46,47 @@ File a public issue for non-sensitive findings. For anything that appears to ena
 ## Audit History
 
 - 2026-04-19: Initial security review (gauntlet pattern). Findings: 2 HIGH + 3 MEDIUM + 2 LOW. All HIGH and MEDIUM addressed in commits 9643f32 (escape + delimiters), 09cab56 (do shell script removal), 9dd7d77 (Zod schemas). Plan and both reviews archived in `docs/superpowers/plans/2026-04-19-calendar-security-hardening.md`.
+- 2026-04-20: v0.2.0 pre-release audit (see below).
+
+## v0.2.0 Audit (April 20, 2026)
+
+### Scope
+Adding write operations (create, update, delete events; respond to invitations) to what was a read-only package. New attack surface includes: URL field, description field with multi-line content, email field, calendar-name resolution for writes, destructive operations.
+
+### Threat Model Changes from v0.1.0
+- **Previously:** All tool parameters were inputs to read-only queries. Worst case from injection was information disclosure.
+- **Now:** Parameters influence server-affecting writes, including sync to third-party calendar servers (iCloud, Exchange, Google). An injected AppleScript or misused tool call can create unwanted events, modify calendar entries, or delete data.
+- **New concern:** Prompt injection via calendar invite content. A malicious actor sending an invite with crafted text in summary/description could attempt to steer the AI to call destructive tools on unrelated events.
+
+### Findings from gauntlet review (pre-execution)
+Two rounds of adversarial review before any code shipped. See `docs/superpowers/plans/2026-04-20-apple-calendar-mcp-write-tools.md` for the full review archive.
+
+**Critical issues addressed:**
+- URL scheme validation (rejects `javascript:`, `file:`, `data:`)
+- Description newline handling via `linefeed` concatenation (escape function stays strict)
+- Calendar writability + uniqueness check before write
+- Delete operation scoped to specific calendar, refuses recurring masters, returns event context
+
+**Important issues addressed:**
+- Participation status enum mapped to AppleScript constants via lookup table
+- Email regex rejects multiple `@` characters
+- Strict date bounds (+/- 50 years, rejects rolled-over dates)
+- Audit logging for all writes
+- Invitation response send-behavior variance documented
+- Control character stripping in output parser (defense against stored data)
+
+**Defensive additions:**
+- `APPLE_CALENDAR_MCP_READ_ONLY=1` environment variable
+- Per-session rate limiting on destructive operations (10 deletes / 60s)
+- Feature branch development to prevent partial-state main
+
+### Known Weaknesses (accepted)
+- **Invitation response send behavior varies by account type.** Documented in tool description and TROUBLESHOOTING.md.
+- **IDN emails not supported.** Apple Calendar normalizes to punycode; real usage should be rare but worth noting.
+- **Recurring event support is read-only.** Creating, updating, or deleting recurring series is not supported - too complex for v0.2.0. Single-occurrence events handled fully.
+- **Audit log is stderr-only.** No persistent file log. Users who want retained audit trails should redirect stderr.
+- **No cryptographic signature on writes.** A malicious MCP host could substitute our process. Out of scope - trust boundary is the MCP host.
+
+### What's NOT protected
+(Same as v0.1.0, plus:)
+- **Agentic misuse via prompt injection:** If an AI assistant is tricked into calling write tools by untrusted content, the schema validation catches obviously-bad inputs but cannot detect semantically-valid-but-unwanted operations. The rate limiter and READ_ONLY opt-out are mitigations, not guarantees.
