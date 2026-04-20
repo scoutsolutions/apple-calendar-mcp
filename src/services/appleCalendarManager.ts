@@ -377,15 +377,15 @@ export class AppleCalendarManager {
 
     return {
       id: uid,
-      summary: fields[1].trim(),
+      summary: stripControlChars(fields[1].trim()),
       startDate: appleDateToIso(fields[2].trim()),
       endDate: appleDateToIso(fields[3].trim()),
       allDay: fields[4].trim() === "true",
-      location: fields[5].trim() || undefined,
-      description: fields[6].trim() || undefined,
-      calendarName: fields[7].trim(),
-      status: fields[8].trim() || undefined,
-      url: fields[9].trim() || undefined,
+      location: stripControlChars(fields[5].trim()) || undefined,
+      description: stripControlChars(fields[6].trim()) || undefined,
+      calendarName: stripControlChars(fields[7].trim()),
+      status: stripControlChars(fields[8].trim()) || undefined,
+      url: stripControlChars(fields[9].trim()) || undefined,
       attendees,
     };
   }
@@ -560,19 +560,37 @@ export class AppleCalendarManager {
       location?: string;
       description?: string;
       url?: string;
-    }
+    },
+    calendarName?: string
   ): boolean {
     if (isReadOnlyMode()) {
       throw new Error("Server is in read-only mode (APPLE_CALENDAR_MCP_READ_ONLY set)");
     }
 
-    const script = buildUpdateEventScript(uid, updates);
+    // If calendarName is provided, resolve and scope the update. Refuses
+    // ambiguous or read-only calendars. Same safety posture as deleteEvent.
+    // When NOT provided, preserves v0.2.0 backward-compat behavior
+    // (cross-calendar UID search).
+    if (calendarName !== undefined) {
+      const resolved = this.resolveWritableCalendar(calendarName);
+      if (!resolved) {
+        auditLog("update-event", {
+          uid,
+          calendarName,
+          result: "calendar-not-resolved",
+        });
+        return false;
+      }
+    }
+
+    const script = buildUpdateEventScript(uid, updates, calendarName);
     if (script === null) return true; // no-op: nothing to update
 
     const result = executeAppleScript(script, { timeoutMs: 60000 });
 
     auditLog("update-event", {
       uid,
+      calendarName: calendarName ?? "(cross-calendar)",
       fields: Object.keys(updates)
         .filter((k) => updates[k as keyof typeof updates] !== undefined)
         .join(","),
@@ -823,7 +841,10 @@ function buildCreateEventScript(
   `);
 }
 
-/** Build update-event script. Returns null if no updates provided. */
+/** Build update-event script. Returns null if no updates provided.
+ *  When `calendarName` is provided, scopes the event lookup to that
+ *  specific calendar (safer against cross-calendar prompt injection).
+ *  When undefined, searches across all calendars (v0.2.0 behavior). */
 function buildUpdateEventScript(
   uid: string,
   updates: {
@@ -833,7 +854,8 @@ function buildUpdateEventScript(
     location?: string;
     description?: string;
     url?: string;
-  }
+  },
+  calendarName?: string
 ): string | null {
   const uidEsc = escapeForAppleScript(uid);
   const setters: string[] = [];
@@ -859,6 +881,27 @@ function buildUpdateEventScript(
 
   if (setters.length === 0) return null;
 
+  // Scoped variant: wrap in tell calendar block
+  if (calendarName !== undefined) {
+    const calEsc = escapeForAppleScript(calendarName);
+    return buildCalendarScript(`
+    try
+      tell calendar "${calEsc}"
+        set matches to (every event whose uid is "${uidEsc}")
+        if (count of matches) > 0 then
+          set e to item 1 of matches
+          ${setters.join("\n          ")}
+          return "ok"
+        end if
+        return "event-not-found"
+      end tell
+    on error errMsg
+      return "error:" & errMsg
+    end try
+  `);
+  }
+
+  // Unscoped variant: cross-calendar UID search (backward compatible)
   return buildCalendarScript(`
     try
       repeat with c in calendars

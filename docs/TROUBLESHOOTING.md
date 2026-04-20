@@ -89,3 +89,14 @@ If you want a persistent file log, redirect stderr when launching the MCP via sh
 - For event descriptions: newlines are allowed; strip tabs and other control chars.
 - For summary, location, calendar name, UID, email: strip all control characters. If your paste source has invisible formatting, retype the visible content.
 - Common gotcha: pasting from terminal buffers sometimes includes ANSI escape sequences. Paste into a plain-text editor first to strip them, then re-paste.
+
+## "URL must use http or https scheme"
+
+**Symptom.** `create-event` or `update-event` with a `url` parameter rejects with "URL must use http or https scheme."
+
+**Cause.** The URL schema allows only `http:` and `https:` to prevent XSS vectors in calendar clients that render event URLs. Other schemes (`mailto:`, `tel:`, `javascript:`, `file:`, `data:`) are rejected even if they're syntactically valid URLs.
+
+**Resolution.**
+- If you were pasting a Teams/Zoom/Meet URL, those should already be `https://` - check the full link was copied.
+- If you want a `mailto:` or `tel:` link, put it in the event description instead of the URL field.
+- If you're trying to attach a local file (`file://`), Apple Calendar handles event URLs inconsistently across clients; put the file path in the description instead.

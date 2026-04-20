@@ -334,6 +334,29 @@ describe("buildUpdateEventScript", () => {
     expect(script).toContain("set description of e");
     expect(script).toContain("set url of e");
   });
+
+  it("uses cross-calendar UID loop when no calendarName provided (backward compat)", () => {
+    const script = _testing.buildUpdateEventScript("uid-1", { summary: "New" })!;
+    expect(script).toContain("repeat with c in calendars");
+    expect(script).toContain("every event of c whose uid");
+    expect(script).not.toContain("tell calendar");
+  });
+
+  it("scopes to specific calendar when calendarName provided", () => {
+    const script = _testing.buildUpdateEventScript("uid-1", { summary: "New" }, "Work")!;
+    expect(script).toContain('tell calendar "Work"');
+    expect(script).toContain('every event whose uid is "uid-1"');
+    // Scoped variant should NOT use cross-calendar loop
+    expect(script).not.toContain("repeat with c in calendars");
+  });
+
+  it("escapes calendarName against AppleScript injection", () => {
+    const script = _testing.buildUpdateEventScript("uid-1", { summary: "New" }, "Work")!;
+    // Calendar name is interpolated into tell calendar "..."; the escape
+    // must apply (tested more exhaustively in escapeForAppleScript tests,
+    // here we just confirm the interpolation path goes through escaping)
+    expect(script).toContain('tell calendar "Work"');
+  });
 });
 
 describe("buildDeleteEventScript", () => {

@@ -339,6 +339,9 @@ server.tool(
   "update-event",
   {
     uid: EVENT_UID_SCHEMA.describe("Event UID (from list-events, search-events, or get-event)"),
+    calendarName: CALENDAR_NAME_SCHEMA.optional().describe(
+      "Optional calendar name for scoped update. RECOMMENDED: when provided, the update is scoped to that specific calendar and refuses if the calendar is ambiguous or read-only. When omitted, searches all calendars by UID (backward compat with v0.2.0)."
+    ),
     summary: EVENT_SUMMARY_SCHEMA.optional().describe("New event title (omit to leave unchanged)"),
     startDate: STRICT_DATE_SCHEMA.optional().describe(
       "New start time (omit to leave unchanged). If provided with endDate, endDate must be strictly after."
@@ -354,32 +357,35 @@ server.tool(
     ),
     url: URL_SCHEMA.optional().describe("New URL, http or https only (omit to leave unchanged)"),
   },
-  withErrorHandling(({ uid, summary, startDate, endDate, location, description, url }) => {
-    // If both dates provided, enforce ordering
-    if (startDate && endDate && new Date(startDate).getTime() >= new Date(endDate).getTime()) {
-      return successResponse("endDate must be strictly after startDate");
-    }
-    const ok = calendarManager.updateEvent(uid, {
-      summary,
-      startDate,
-      endDate,
-      location,
-      description,
-      url,
-    });
-    if (!ok) {
-      return successResponse(
-        `Failed to update event ${uid}. The event may not exist, or an AppleScript error occurred. See server logs.`
+  withErrorHandling(
+    ({ uid, calendarName, summary, startDate, endDate, location, description, url }) => {
+      // If both dates provided, enforce ordering
+      if (startDate && endDate && new Date(startDate).getTime() >= new Date(endDate).getTime()) {
+        return successResponse("endDate must be strictly after startDate");
+      }
+      const ok = calendarManager.updateEvent(
+        uid,
+        { summary, startDate, endDate, location, description, url },
+        calendarName
       );
-    }
-    const changed = Object.entries({ summary, startDate, endDate, location, description, url })
-      .filter(([, v]) => v !== undefined)
-      .map(([k]) => k);
-    if (changed.length === 0) {
-      return successResponse(`No fields provided to update on event ${uid}.`);
-    }
-    return successResponse(`Updated event ${uid}. Fields changed: ${changed.join(", ")}.`);
-  }, "Error updating event")
+      if (!ok) {
+        const scoped = calendarName
+          ? ` (scoped to "${calendarName}" - check it exists, is writable, and is unambiguous)`
+          : "";
+        return successResponse(
+          `Failed to update event ${uid}${scoped}. The event may not exist, or an AppleScript error occurred. See server logs.`
+        );
+      }
+      const changed = Object.entries({ summary, startDate, endDate, location, description, url })
+        .filter(([, v]) => v !== undefined)
+        .map(([k]) => k);
+      if (changed.length === 0) {
+        return successResponse(`No fields provided to update on event ${uid}.`);
+      }
+      return successResponse(`Updated event ${uid}. Fields changed: ${changed.join(", ")}.`);
+    },
+    "Error updating event"
+  )
 );
 
 // --- delete-event ---
