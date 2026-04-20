@@ -20,6 +20,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { AppleCalendarManager } from "@/services/appleCalendarManager.js";
+import { checkThrottle } from "@/utils/writeHelpers.js";
 
 // =============================================================================
 // Input Validation Schemas
@@ -510,6 +511,44 @@ server.tool(
     }
     return successResponse(`Updated event ${uid}. Fields changed: ${changed.join(", ")}.`);
   }, "Error updating event")
+);
+
+// --- delete-event ---
+
+server.tool(
+  "delete-event",
+  {
+    calendarName: CALENDAR_NAME_SCHEMA.describe(
+      "Calendar containing the event. Required for safety scoping - prevents cross-calendar " +
+        "delete via prompt injection. Use list-calendars to confirm the calendar name is " +
+        "unambiguous; this tool refuses to delete from ambiguous or read-only calendars."
+    ),
+    uid: EVENT_UID_SCHEMA.describe(
+      "Event UID to delete. Refuses to delete recurring event masters - use Calendar.app for series-wide deletion."
+    ),
+  },
+  withErrorHandling(({ calendarName, uid }) => {
+    // Per-session rate limit on deletes (N1)
+    checkThrottle("delete-event", 10);
+
+    // Get event context BEFORE deleting so we can surface it in the response
+    const event = calendarManager.getEvent(uid);
+    const context = event ? ` ("${event.summary}" at ${event.startDate})` : "";
+
+    const outcome = calendarManager.deleteEvent(calendarName, uid);
+    const messages: Record<typeof outcome, string> = {
+      ok:
+        `Deleted event ${uid}${context}. Recoverability depends on account type - ` +
+        `iCloud/Google retain in trash ~30 days; Exchange goes to Deleted Items; ` +
+        `local-only calendars are permanent.`,
+      "not-found": `Event ${uid} not found in "${calendarName}" (or calendar is ambiguous/read-only).`,
+      "is-recurring-master":
+        `Event ${uid} is a recurring series master. Deleting would remove all occurrences. ` +
+        `Use Calendar.app to delete individual occurrences or confirm series-wide deletion.`,
+      error: `An error occurred. See server logs for details.`,
+    };
+    return successResponse(messages[outcome]);
+  }, "Error deleting event")
 );
 
 // =============================================================================

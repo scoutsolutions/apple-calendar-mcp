@@ -23,6 +23,7 @@ If you already have an Exchange account configured in Apple Calendar, or an iClo
 | `respond-to-invitation` | Accept/decline/tentative an event invitation. NOTE: send-behavior varies by account type. |
 | `create-event` | Create a new calendar event. NOT for Teams/Zoom meetings (see docs/TEAMS-LINKS.md). |
 | `update-event` | Modify an existing event's summary/times/location/notes/URL. |
+| `delete-event` | Delete an event from a specified calendar. Refuses recurring masters. |
 
 ## Write tool examples
 
@@ -100,6 +101,22 @@ update-event uid="abc123" location=""
 update-event uid="abc123" summary="New title"
 -> Changes only the summary; location, times, etc. unchanged
 ```
+
+### Deleting an event
+
+Requires BOTH `calendarName` and `uid` - this is a safety scoping requirement:
+
+```
+delete-event calendarName="Work" uid="abc123"
+-> "Deleted event abc123 ('Canceled meeting' at 2026-04-25T15:00:00.000Z).
+   Recoverability depends on account type - iCloud/Google retain in trash ~30 days;
+   Exchange goes to Deleted Items; local-only calendars are permanent."
+```
+
+**What this tool refuses:**
+- Recurring event masters (would delete all occurrences) - use Calendar.app for series-wide deletion
+- Events not found in the specified calendar (must scope correctly)
+- More than 10 deletes in 60 seconds (rate limit)
 
 ## Requirements
 

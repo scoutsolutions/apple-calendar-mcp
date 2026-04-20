@@ -335,3 +335,29 @@ describe("buildUpdateEventScript", () => {
     expect(script).toContain("set url of e");
   });
 });
+
+describe("buildDeleteEventScript", () => {
+  it("scopes to the specified calendar", () => {
+    const script = _testing.buildDeleteEventScript("Work", "uid-1");
+    expect(script).toContain('tell calendar "Work"');
+    expect(script).toContain('uid is "uid-1"');
+    expect(script).toContain("delete e");
+  });
+
+  it("refuses recurring masters", () => {
+    const script = _testing.buildDeleteEventScript("Work", "uid-1");
+    expect(script).toContain("set r to recurrence of e");
+    expect(script).toContain('return "is-recurring-master"');
+  });
+
+  it("returns delimited summary+start on success for context", () => {
+    const script = _testing.buildDeleteEventScript("Work", "uid-1");
+    expect(script).toContain('return "ok|||" & eSummary & "|||" & eStart');
+  });
+
+  it("distinct outcomes for not-found and recurring", () => {
+    const script = _testing.buildDeleteEventScript("Work", "uid-1");
+    expect(script).toContain('return "not-found"');
+    expect(script).toContain('return "is-recurring-master"');
+  });
+});
