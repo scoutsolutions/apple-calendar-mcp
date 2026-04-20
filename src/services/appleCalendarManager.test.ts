@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { _testing } from "./appleCalendarManager.js";
+import { buildMultilineAppleScript, checkThrottle } from "@/utils/writeHelpers.js";
 
 describe("escapeForAppleScript", () => {
   it("escapes backslashes", () => {
@@ -101,5 +102,68 @@ describe("parseEventList", () => {
     const events = _testing.parseEventList(raw);
     expect(events).toHaveLength(1);
     expect(events[0].id).toBe("event-1");
+  });
+
+  it("strips stray control characters from output fields", () => {
+    // Simulates stored data that contains our delimiter or other control chars.
+    // The parser must not propagate those to consumers.
+    const raw = `event-\x011${FS}Meet\x02ing${FS}2026-04-20 09:00:00${FS}2026-04-20 10:00:00${FS}false${FS}Z\x03oom${FS}Cal\x04endar${RS}`;
+    const events = _testing.parseEventList(raw);
+    expect(events).toHaveLength(1);
+    expect(events[0].id).toBe("event-1");
+    expect(events[0].summary).toBe("Meeting");
+    expect(events[0].location).toBe("Zoom");
+    expect(events[0].calendarName).toBe("Calendar");
+  });
+});
+
+describe("buildMultilineAppleScript", () => {
+  const esc = _testing.escapeForAppleScript;
+
+  it("single line stays as a single quoted string", () => {
+    expect(buildMultilineAppleScript("hello", esc)).toBe('"hello"');
+  });
+
+  it("multi-line joins with linefeed", () => {
+    expect(buildMultilineAppleScript("line 1\nline 2", esc)).toBe('"line 1" & linefeed & "line 2"');
+  });
+
+  it("CRLF normalized to LF", () => {
+    expect(buildMultilineAppleScript("a\r\nb", esc)).toBe('"a" & linefeed & "b"');
+  });
+
+  it("lone CR normalized to LF", () => {
+    expect(buildMultilineAppleScript("a\rb", esc)).toBe('"a" & linefeed & "b"');
+  });
+
+  it("empty lines preserved", () => {
+    expect(buildMultilineAppleScript("a\n\nb", esc)).toBe('"a" & linefeed & "" & linefeed & "b"');
+  });
+
+  it("rejects >500 lines", () => {
+    const pathological = Array(501).fill("x").join("\n");
+    expect(() => buildMultilineAppleScript(pathological, esc)).toThrow(/500 lines/);
+  });
+
+  it("escapes quotes within a line", () => {
+    expect(buildMultilineAppleScript('say "hi"', esc)).toBe('"say \\"hi\\""');
+  });
+
+  it("propagates escape errors for control chars other than newline", () => {
+    // Tab is a control char; escape rejects it
+    expect(() => buildMultilineAppleScript("has\ttab", esc)).toThrow(/control character/i);
+  });
+});
+
+describe("checkThrottle", () => {
+  it("allows operations under the limit", () => {
+    expect(() => {
+      for (let i = 0; i < 5; i++) checkThrottle("test-under", 10);
+    }).not.toThrow();
+  });
+
+  it("throws when limit exceeded", () => {
+    for (let i = 0; i < 3; i++) checkThrottle("test-over", 3);
+    expect(() => checkThrottle("test-over", 3)).toThrow(/Rate limit/);
   });
 });

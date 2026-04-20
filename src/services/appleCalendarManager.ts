@@ -411,6 +411,36 @@ export class AppleCalendarManager {
     return this.listEvents(this.formatAppleDate(monday), this.formatAppleDate(nextMonday));
   }
 
+  /**
+   * Resolve a calendar by name, verifying it's writable and unambiguous.
+   *
+   * Exchange's default calendar is often just named "Calendar" - multiple
+   * accounts produce duplicate names. AppleScript's `tell calendar "X"`
+   * targets the first match by undocumented order, so ambiguous names
+   * would silently land events in the wrong account. This check refuses
+   * to proceed unless exactly one writable calendar with that name exists.
+   *
+   * @returns null if not found, not writable, or ambiguous. Call
+   *          listCalendars() to discover available names.
+   */
+  resolveWritableCalendar(name: string): { name: string; writable: boolean } | null {
+    const all = this.listCalendars();
+    const matches = all.filter((c) => c.name === name);
+    if (matches.length === 0) return null;
+    if (matches.length > 1) {
+      console.error(
+        `[audit] Calendar "${name}" is ambiguous: ${matches.length} matches found. ` +
+          `Apple Calendar AppleScript cannot disambiguate by account. Refusing write.`
+      );
+      return null;
+    }
+    if (!matches[0].writable) {
+      console.error(`[audit] Calendar "${name}" is read-only. Refusing write.`);
+      return null;
+    }
+    return matches[0];
+  }
+
   // ===========================================================================
   // Private Helpers
   // ===========================================================================
@@ -496,6 +526,16 @@ export class AppleCalendarManager {
 }
 
 /**
+ * Strip ASCII control characters from a string. Used on output fields to
+ * defend against stored data that contains the field/record delimiters
+ * (e.g., from an imported ICS file or another tool's write).
+ */
+function stripControlChars(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+}
+
+/**
  * Free-function implementation of parseEventList for unit testing.
  * Kept outside the class because it has no instance state.
  */
@@ -507,13 +547,13 @@ function parseEventListImpl(raw: string): CalendarEvent[] {
     const fields = rec.split(FIELD_SEP);
     if (fields.length < 7) continue;
     events.push({
-      id: fields[0].trim(),
-      summary: fields[1].trim(),
+      id: stripControlChars(fields[0].trim()),
+      summary: stripControlChars(fields[1].trim()),
       startDate: appleDateToIso(fields[2].trim()),
       endDate: appleDateToIso(fields[3].trim()),
       allDay: fields[4].trim() === "true",
-      location: fields[5].trim() || undefined,
-      calendarName: fields[6].trim(),
+      location: stripControlChars(fields[5].trim()) || undefined,
+      calendarName: stripControlChars(fields[6].trim()),
     });
   }
   return events;
@@ -527,4 +567,5 @@ export const _testing = {
   FIELD_SEP,
   RECORD_SEP,
   parseEventList: parseEventListImpl,
+  stripControlChars,
 };

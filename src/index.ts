@@ -78,6 +78,102 @@ const SEARCH_QUERY_SCHEMA = z
 /** Bounded integer limit for event listing. */
 const EVENT_LIMIT_SCHEMA = z.number().int().min(1).max(500);
 
+/* eslint-disable @typescript-eslint/no-unused-vars -- schemas declared here
+   are consumed by write-tool registrations added in subsequent tasks */
+
+/** URL for event property. MUST be http or https - javascript:, file:, data:
+ *  and other schemes are rejected because event URLs get rendered in
+ *  various calendar clients (Outlook, Apple Calendar popovers, CalDAV
+ *  viewers) where a javascript: URL is an XSS vector. */
+const URL_SCHEMA = z
+  .string()
+  .url()
+  .max(2000)
+  .refine(
+    (u) => {
+      try {
+        const proto = new URL(u).protocol;
+        return proto === "http:" || proto === "https:";
+      } catch {
+        return false;
+      }
+    },
+    { message: "URL must use http or https scheme" }
+  );
+
+/** Email address with @ excluded from both sides (prevents a@b@c),
+ *  control chars rejected, whitespace rejected. IDN emails (non-ASCII)
+ *  are NOT supported - Apple Calendar normalizes to punycode anyway. */
+const EMAIL_SCHEMA = z
+  .string()
+  .min(3)
+  .max(320)
+  .regex(
+    // eslint-disable-next-line no-control-regex
+    /^[^\x00-\x1F\x7F\\"\s@]+@[^\x00-\x1F\x7F\\"\s@]+$/,
+    "Must be a valid ASCII email address (no whitespace, no control characters, exactly one @)"
+  );
+
+/** Participation status enum per RFC 5545. Kept as an enum (not free
+ *  string) so AppleScript constant mapping is explicit (see Task 1). */
+const PARTICIPATION_STATUS_SCHEMA = z.enum(["accepted", "declined", "tentative", "needs-action"]);
+
+/** Event summary (title). Single-line text, control chars rejected. */
+const EVENT_SUMMARY_SCHEMA = z
+  .string()
+  .min(1)
+  .max(500)
+  .regex(
+    // eslint-disable-next-line no-control-regex
+    /^[^\x00-\x1F\x7F]+$/,
+    "Event summary must not contain control characters or newlines"
+  );
+
+/** Event location. Single-line, allows empty (to clear a location). */
+const EVENT_LOCATION_SCHEMA = z
+  .string()
+  .max(500)
+  .regex(
+    // eslint-disable-next-line no-control-regex
+    /^[^\x00-\x1F\x7F]*$/,
+    "Location must not contain control characters or newlines"
+  );
+
+/** Event description. ALLOWS newlines (\n, \r\n, \r) - multi-line notes
+ *  are legitimate. Rejects all other control chars. Handled via
+ *  buildMultilineAppleScript in the service layer. */
+const EVENT_DESCRIPTION_SCHEMA = z
+  .string()
+  .max(5000)
+  .regex(
+    // eslint-disable-next-line no-control-regex
+    /^[^\x00-\x08\x0B\x0C\x0E-\x1F\x7F]*$/,
+    "Description may contain newlines but not other control characters"
+  );
+
+/** Tightened date schema. Rejects rolled-over dates ("Feb 30" -> Mar 2),
+ *  bounds to a reasonable window to prevent typos landing years away. */
+const STRICT_DATE_SCHEMA = z
+  .string()
+  .regex(
+    /^[a-zA-Z0-9 ,/\-:]+$/,
+    "Date must contain only alphanumeric characters, spaces, commas, slashes, hyphens, and colons"
+  )
+  .refine((val) => !isNaN(new Date(val).getTime()), {
+    message: "Date string must be a valid date",
+  })
+  .refine(
+    (val) => {
+      const d = new Date(val);
+      const now = Date.now();
+      const fiftyYears = 50 * 365.25 * 24 * 60 * 60 * 1000;
+      return Math.abs(d.getTime() - now) < fiftyYears;
+    },
+    { message: "Date must be within 50 years of today" }
+  );
+
+/* eslint-enable @typescript-eslint/no-unused-vars */
+
 // Read version from package.json to keep it in sync
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json") as { version: string };
