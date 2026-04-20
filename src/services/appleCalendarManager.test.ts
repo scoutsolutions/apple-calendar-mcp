@@ -208,8 +208,16 @@ describe("buildCreateEventScript", () => {
     );
     expect(script).toContain('tell calendar "Work"');
     expect(script).toContain('summary:"Lunch"');
-    expect(script).toContain('start date:date "April 22, 2026 12:00 PM"');
-    expect(script).toContain('end date:date "April 22, 2026 1:00 PM"');
+    // v0.2.2: dates are now built from components, not literal strings
+    expect(script).toContain("set startDateObj to (current date)");
+    expect(script).toContain("set endDateObj to (current date)");
+    expect(script).toContain("set year of startDateObj to 2026");
+    expect(script).toContain("set month of startDateObj to 4");
+    expect(script).toContain("set day of startDateObj to 22");
+    expect(script).toContain("set time of startDateObj to 43200"); // 12:00 PM = noon = 43200
+    expect(script).toContain("set time of endDateObj to 46800"); // 1:00 PM = 13h = 46800
+    expect(script).toContain("start date:startDateObj");
+    expect(script).toContain("end date:endDateObj");
     expect(script).toContain("allday event:false");
     expect(script).not.toContain("location:");
     expect(script).not.toContain("description:");
@@ -297,8 +305,14 @@ describe("buildUpdateEventScript", () => {
       startDate: "April 25, 2026 10:00 AM",
       endDate: "April 25, 2026 11:00 AM",
     })!;
-    expect(script).toContain('set start date of e to date "April 25, 2026 10:00 AM"');
-    expect(script).toContain('set end date of e to date "April 25, 2026 11:00 AM"');
+    // v0.2.2: dates are now built from components via buildAppleScriptDateBlock
+    expect(script).toContain("set startDateObj to (current date)");
+    expect(script).toContain("set endDateObj to (current date)");
+    expect(script).toContain("set day of startDateObj to 25");
+    expect(script).toContain("set time of startDateObj to 36000"); // 10:00 AM
+    expect(script).toContain("set time of endDateObj to 39600"); // 11:00 AM
+    expect(script).toContain("set start date of e to startDateObj");
+    expect(script).toContain("set end date of e to endDateObj");
   });
 
   it("clears location when empty string passed", () => {

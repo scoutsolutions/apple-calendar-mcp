@@ -18,6 +18,8 @@ import type {
   EventAttendee,
   ParticipationStatus,
 } from "@/types.js";
+import { parseUserDateInput } from "./dateInput.js";
+import { buildAppleScriptDateBlock } from "./appleScriptDate.js";
 
 // =============================================================================
 // AppleScript Helpers
@@ -793,7 +795,12 @@ function buildRespondScript(uid: string, userEmail: string, status: Participatio
   `);
 }
 
-/** Build create-event script. */
+/** Build create-event script.
+ *
+ * Since v0.2.2: uses buildAppleScriptDateBlock to construct start/end dates
+ * from parsed components rather than feeding raw strings to AppleScript's
+ * `date "..."` coercion. This fixes silent time-truncation for 24-hour and
+ * ISO-format inputs (see CHANGELOG for v0.2.2). */
 function buildCreateEventScript(
   calendarName: string,
   summary: string,
@@ -808,14 +815,18 @@ function buildCreateEventScript(
 ): string {
   const calEsc = escapeForAppleScript(calendarName);
   const summaryEsc = escapeForAppleScript(summary);
-  const startEsc = escapeForAppleScript(startDate);
-  const endEsc = escapeForAppleScript(endDate);
   const allDay = options.allDay ? "true" : "false";
+
+  const startComp = parseUserDateInput(startDate);
+  const endComp = parseUserDateInput(endDate);
+  const forceMidnight = options.allDay === true;
+  const startBlock = buildAppleScriptDateBlock(startComp, "startDateObj", { forceMidnight });
+  const endBlock = buildAppleScriptDateBlock(endComp, "endDateObj", { forceMidnight });
 
   const props: string[] = [
     `summary:"${summaryEsc}"`,
-    `start date:date "${startEsc}"`,
-    `end date:date "${endEsc}"`,
+    `start date:startDateObj`,
+    `end date:endDateObj`,
     `allday event:${allDay}`,
   ];
   if (options.location !== undefined) {
@@ -830,6 +841,8 @@ function buildCreateEventScript(
   }
 
   return buildCalendarScript(`
+    ${startBlock}
+    ${endBlock}
     try
       tell calendar "${calEsc}"
         set newEvent to make new event with properties {${props.join(", ")}}
@@ -844,7 +857,12 @@ function buildCreateEventScript(
 /** Build update-event script. Returns null if no updates provided.
  *  When `calendarName` is provided, scopes the event lookup to that
  *  specific calendar (safer against cross-calendar prompt injection).
- *  When undefined, searches across all calendars (v0.2.0 behavior). */
+ *  When undefined, searches across all calendars (v0.2.0 behavior).
+ *
+ *  Since v0.2.2: date updates use buildAppleScriptDateBlock pre-script
+ *  blocks instead of `date "..."` literals, avoiding the locale-dependent
+ *  silent time-truncation bug. Date blocks are only emitted when the
+ *  corresponding field is being updated. */
 function buildUpdateEventScript(
   uid: string,
   updates: {
@@ -859,14 +877,20 @@ function buildUpdateEventScript(
 ): string | null {
   const uidEsc = escapeForAppleScript(uid);
   const setters: string[] = [];
+  const preBlocks: string[] = [];
+
   if (updates.summary !== undefined) {
     setters.push(`set summary of e to "${escapeForAppleScript(updates.summary)}"`);
   }
   if (updates.startDate !== undefined) {
-    setters.push(`set start date of e to date "${escapeForAppleScript(updates.startDate)}"`);
+    const comp = parseUserDateInput(updates.startDate);
+    preBlocks.push(buildAppleScriptDateBlock(comp, "startDateObj"));
+    setters.push(`set start date of e to startDateObj`);
   }
   if (updates.endDate !== undefined) {
-    setters.push(`set end date of e to date "${escapeForAppleScript(updates.endDate)}"`);
+    const comp = parseUserDateInput(updates.endDate);
+    preBlocks.push(buildAppleScriptDateBlock(comp, "endDateObj"));
+    setters.push(`set end date of e to endDateObj`);
   }
   if (updates.location !== undefined) {
     setters.push(`set location of e to "${escapeForAppleScript(updates.location)}"`);
@@ -881,10 +905,13 @@ function buildUpdateEventScript(
 
   if (setters.length === 0) return null;
 
+  const pre = preBlocks.join("\n");
+
   // Scoped variant: wrap in tell calendar block
   if (calendarName !== undefined) {
     const calEsc = escapeForAppleScript(calendarName);
     return buildCalendarScript(`
+    ${pre}
     try
       tell calendar "${calEsc}"
         set matches to (every event whose uid is "${uidEsc}")
@@ -903,6 +930,7 @@ function buildUpdateEventScript(
 
   // Unscoped variant: cross-calendar UID search (backward compatible)
   return buildCalendarScript(`
+    ${pre}
     try
       repeat with c in calendars
         try

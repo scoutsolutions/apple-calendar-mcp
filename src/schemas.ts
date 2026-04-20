@@ -12,6 +12,7 @@
  */
 
 import { z } from "zod";
+import { parseUserDateInput } from "./services/dateInput.js";
 
 // =============================================================================
 // Date validation helpers
@@ -103,7 +104,11 @@ function withinFiftyYears(val: string): boolean {
 // Schemas
 // =============================================================================
 
-/** Date strings for optional date filters (v0.1.x read tools). */
+/** Date strings for optional date filters (v0.1.x read tools).
+ *  NOTE: Read-tool filters don't need the v0.2.2 parseUserDateInput gate -
+ *  they're passed straight to AppleScript's date "..." coercion for range
+ *  matching, which is locale-permissive on read. Only WRITE dates need the
+ *  stricter policy. */
 export const DATE_FILTER_SCHEMA = z
   .string()
   .regex(
@@ -119,16 +124,29 @@ export const DATE_FILTER_SCHEMA = z
   })
   .optional();
 
-/** Required date schema for write tools. Adds 50-year bounds and
- *  rolled-over rejection on top of DATE_FILTER_SCHEMA's base validation. */
+/** Required date schema for write tools. Since v0.2.2, write dates must
+ *  parse through parseUserDateInput, which enforces a locked format policy
+ *  (local wall-clock only; rejects ISO with Z or numeric offset) and is the
+ *  same parser the AppleScript builder uses. This eliminates Zod↔AppleScript
+ *  parse divergence that caused silent time-truncation in 0.2.0/0.2.1. */
 export const REQUIRED_DATE_SCHEMA = z
   .string()
   .regex(
-    /^[a-zA-Z0-9 ,/\-:]+$/,
-    "Date must contain only alphanumeric characters, spaces, commas, slashes, hyphens, and colons"
+    /^[a-zA-Z0-9 ,/\-:+]+$/,
+    "Date must contain only alphanumeric characters, spaces, commas, slashes, hyphens, colons, and plus signs"
   )
   .refine((val) => !isNaN(new Date(val).getTime()), {
     message: "Date string must be a valid date (e.g., 'January 1, 2026' or '2026-03-15')",
+  })
+  .superRefine((val, ctx) => {
+    try {
+      parseUserDateInput(val);
+    } catch (err) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: err instanceof Error ? err.message : "Invalid date format",
+      });
+    }
   })
   .refine(rejectsRolledOver, {
     message:
