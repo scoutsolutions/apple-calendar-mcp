@@ -3,13 +3,16 @@
  * Apple Calendar MCP Server
  *
  * A Model Context Protocol (MCP) server that provides AI assistants with
- * read-only access to Apple Calendar events across all synced accounts
- * (iCloud, Google, Exchange, etc.).
+ * read and (as of v0.2.0) limited write access to Apple Calendar events
+ * across all synced accounts (iCloud, Google, Exchange, etc.).
  *
- * Event creation is deliberately NOT included. AppleScript-created events
- * don't get Teams/Zoom meeting links or proper server-side resources.
- * For meetings that need online-meeting integration, use a Microsoft Graph
- * or Google Calendar MCP instead.
+ * Write tools (create-event, update-event, delete-event,
+ * respond-to-invitation) are deliberately limited. AppleScript cannot
+ * provision Teams/Zoom/Meet meeting URLs, so online meetings that need
+ * a fresh meeting resource should be created via Outlook, Google
+ * Calendar, or the appropriate platform MCP.
+ *
+ * Set APPLE_CALENDAR_MCP_READ_ONLY=1 to disable write tools server-wide.
  *
  * @module apple-calendar-mcp
  * @see https://modelcontextprotocol.io
@@ -182,7 +185,7 @@ const server = new McpServer({
   name: "apple-calendar",
   version,
   description:
-    "MCP server for reading Apple Calendar events across iCloud, Google, Exchange accounts",
+    "MCP server for reading and writing Apple Calendar events across iCloud, Google, Exchange accounts. Write tools cannot provision Teams/Zoom/Meet meeting URLs - see docs/TEAMS-LINKS.md.",
 });
 
 const calendarManager = new AppleCalendarManager();
