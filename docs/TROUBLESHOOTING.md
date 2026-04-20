@@ -100,3 +100,24 @@ If you want a persistent file log, redirect stderr when launching the MCP via sh
 - If you were pasting a Teams/Zoom/Meet URL, those should already be `https://` - check the full link was copied.
 - If you want a `mailto:` or `tel:` link, put it in the event description instead of the URL field.
 - If you're trying to attach a local file (`file://`), Apple Calendar handles event URLs inconsistently across clients; put the file path in the description instead.
+
+## "My event landed at midnight but I specified 3pm" (v0.2.0 / v0.2.1)
+
+**Symptom.** You called `create-event` or `update-event` with a 24-hour time like `"April 21, 2026 15:00:00"` or an ISO string like `"2026-04-21T15:00:00"`, received a success response with a UID, but the event appears in Calendar.app at 12:00 AM.
+
+**Cause.** Prior to v0.2.2, the MCP passed date strings directly into AppleScript's `date "..."` coercion. On US English macOS, this parser silently drops 24-hour time components (it accepts the date portion and defaults time to midnight without raising an error). JS and AppleScript disagreed on "valid," and the mismatch caused silent data corruption.
+
+**Resolution.**
+1. Upgrade to v0.2.2 or later. All supported formats now work correctly.
+2. Audit events created or modified during the affected period (v0.2.0 and v0.2.1, roughly 2026-04-20 to your upgrade date). Open Calendar.app, sort by start time, look for events at exactly 12:00 AM that weren't intended that way.
+3. Fix misplaced events either in Calendar.app directly or via `update-event` - both are safe on v0.2.2.
+
+**Prevention.** v0.2.2 supports: ISO date (`2026-04-21`), ISO datetime without offset (`2026-04-21T15:00:00` or `2026-04-21 15:00:00`), natural language (`April 21, 2026 15:00:00` or `April 21, 2026 3:00 PM`), and US slash (`4/21/2026`). Explicitly rejected: ISO with `Z` or `±HH:mm` offset - convert to local wall-clock time first.
+
+## "Timezone-qualified dates are not supported"
+
+**Symptom.** `create-event` or `update-event` rejects an input like `"2026-04-21T15:00:00Z"` or `"2026-04-21T15:00:00+05:00"` with "Timezone-qualified dates (Z or offset) are not supported."
+
+**Cause.** Apple Calendar events are wall-clock-local by nature. Accepting offset-qualified inputs would require deciding whether to preserve the instant (event day could change across the offset boundary) or the wall-clock time (offset is ignored - misleading). v0.2.2 keeps the contract simple: inputs are interpreted as local wall-clock. If you meant 3pm local, pass `"2026-04-21T15:00:00"` without the `Z` or offset.
+
+**Resolution.** Convert the timestamp to your target local time before calling the tool. For example, if you have `2026-04-21T15:00:00Z` (UTC) and want the event to land at the UTC-equivalent local time, convert UTC → local in your caller and pass the plain local string.

@@ -162,6 +162,44 @@ describe("REQUIRED_DATE_SCHEMA", () => {
   it("still rejects rolled-over dates", () => {
     expect(REQUIRED_DATE_SCHEMA.safeParse("Feb 30 2026").success).toBe(false);
   });
+
+  // v0.2.2: timezone-qualified inputs rejected via parseUserDateInput
+  describe("v0.2.2 timezone-qualified rejection", () => {
+    it("rejects ISO with trailing Z", () => {
+      const r = REQUIRED_DATE_SCHEMA.safeParse("2026-04-21T15:00:00Z");
+      expect(r.success).toBe(false);
+      if (!r.success) {
+        expect(r.error.issues[0].message).toMatch(/[Tt]imezone-qualified/);
+      }
+    });
+
+    it("rejects ISO with positive offset", () => {
+      const r = REQUIRED_DATE_SCHEMA.safeParse("2026-04-21T15:00:00+05:00");
+      expect(r.success).toBe(false);
+    });
+
+    it("rejects ISO with negative offset", () => {
+      const r = REQUIRED_DATE_SCHEMA.safeParse("2026-04-21T15:00:00-04:00");
+      expect(r.success).toBe(false);
+    });
+
+    it("still accepts local wall-clock ISO datetime", () => {
+      expect(REQUIRED_DATE_SCHEMA.safeParse("2026-04-21T15:00:00").success).toBe(true);
+    });
+
+    it("still accepts local 24-hour datetime with space separator", () => {
+      expect(REQUIRED_DATE_SCHEMA.safeParse("2026-04-21 15:00:00").success).toBe(true);
+    });
+
+    it("still accepts date-only YYYY-MM-DD", () => {
+      expect(REQUIRED_DATE_SCHEMA.safeParse("2026-04-21").success).toBe(true);
+    });
+
+    it("still accepts natural-language formats", () => {
+      expect(REQUIRED_DATE_SCHEMA.safeParse("April 21, 2026 3:00 PM").success).toBe(true);
+      expect(REQUIRED_DATE_SCHEMA.safeParse("April 21, 2026 15:00:00").success).toBe(true);
+    });
+  });
 });
 
 describe("EVENT_UID_SCHEMA", () => {

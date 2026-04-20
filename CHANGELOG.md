@@ -4,6 +4,44 @@ All notable changes to apple-calendar-mcp are documented here. Format based on [
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-04-21
+
+Patch release fixing silent data corruption in `create-event` and `update-event` when dates use 24-hour or ISO format. No breaking changes to tool signatures; inputs that worked before still work, plus several previously-broken formats now work correctly.
+
+### Fixed
+- **Silent time truncation in write tools.** When `startDate`/`endDate` used 24-hour time (e.g., `"April 21, 2026 15:00:00"`) or ISO format (e.g., `"2026-04-21T15:00:00"`), AppleScript's `date "..."` string coercion on US English macOS dropped the time to midnight without any error. Events were created at 00:00 local instead of the intended time. Root cause: JavaScript `new Date()` understands 24-hour; AppleScript's locale-dependent parser does not. v0.2.2 bypasses the string coercion by generating AppleScript that assigns year/month/day/time components directly, locale-independently.
+- **`YYYY-MM-DD` date-only inputs would have shifted to the previous day** under any naive JS parsing (ISO date-only is parsed as UTC midnight by JS; `.getDate()` then returns the prior day in US timezones). Gauntlet-caught before release - now handled explicitly by a local-components parse before `new Date()` ever sees the input.
+
+### Added
+- `src/services/dateInput.ts` - `parseUserDateInput(string) → DateComponents`. Single source of truth used by Zod refinement AND AppleScript builder, eliminating parser divergence between validation and execution layers.
+- `src/services/appleScriptDate.ts` - `buildAppleScriptDateBlock(components, varName)`. Emits a locale-independent AppleScript fragment that sets year, month, day, and time via numeric component assignment. Includes the `day of d to 1` rollover guard (AppleScript's eager month arithmetic rolls Feb 31 to Mar 3 without this).
+- `src/services/appleScriptDate.integration.test.ts` - macOS-only integration tests that execute generated AppleScript via `osascript` and assert resulting date components. Proves semantics, not just string shape. Skipped on non-darwin platforms.
+- 18 new `dateInput` unit tests covering supported formats and rejection cases.
+- 8 new `appleScriptDate` unit tests covering rollover guard, forceMidnight, variable naming.
+- 7 new schema tests for timezone-qualified input rejection.
+
+### Changed
+- `REQUIRED_DATE_SCHEMA` (and `STRICT_DATE_SCHEMA` by inheritance) now routes inputs through `parseUserDateInput` before downstream refinements. This is the primary fix: Zod and AppleScript now agree on what "valid" means.
+- `buildCreateEventScript` and `buildUpdateEventScript` emit pre-script date blocks (`set startDateObj to ...`) instead of inlining `date "..."` literals.
+- Character set for date schemas expanded to include `+` so offset inputs reach our refinement with a specific error rather than a generic charset rejection.
+
+### Security
+- **Explicit input-format policy.** ISO strings with trailing `Z` or `±HH:mm` / `±HHmm` offset are now rejected at the Zod boundary with a clear error. v0.2.0/v0.2.1 parsed these via `new Date()` but the behavior across layers was undefined. Accepting them would require handling wall-clock-vs-instant semantics; v0.2.2 keeps everything wall-clock local. Users who need offset handling should convert to local time before calling the tool.
+
+### Audit guidance for v0.2.0 / v0.2.1 users
+
+If you used `create-event` or `update-event` with 24-hour times during 0.2.0 or 0.2.1, existing events may be on your calendar at **00:00 local** instead of the intended time. Suggested audit:
+
+1. Open Calendar.app and sort by start time.
+2. Look for events at 12:00 AM midnight created or modified between 2026-04-20 and your upgrade to 0.2.2.
+3. Cross-reference with your original intent and fix any that are wrong. (The fix is now safe: update the event in Calendar.app directly, or call `update-event` with the correct time now that 0.2.2 handles it properly.)
+
+No existing events are modified by the upgrade itself - this is a read-and-correct audit, not a migration.
+
+### Notes
+- Total tests: 184 (up from 143 in v0.2.1). 65 schema, 57 manager, 28 applescript-util, 18 dateInput, 8 appleScriptDate unit, 8 appleScriptDate macOS-integration.
+- Gauntlet credit: OpenAI (GPT-5.4) caught the duplicate-parser structural issue, the `new Date("YYYY-MM-DD")` UTC landmine, the all-day consistency gap, and the snapshot-only test coverage limitation. Gemini (3.1 Pro, grounded) confirmed AppleScript's `set month of d to <integer>` / `set time of d to <seconds>` idioms are stable on modern macOS. Both reviewers independently flagged the UTC date-only landmine.
+
 ## [0.2.1] - 2026-04-20
 
 Patch release addressing findings from the post-execution gauntlet review of v0.2.0. No breaking changes; existing callers are unaffected.
