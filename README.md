@@ -25,6 +25,23 @@ If you already have an Exchange account configured in Apple Calendar, or an iClo
 | `update-event` | Modify an existing event's summary/times/location/notes/URL. |
 | `delete-event` | Delete an event from a specified calendar. Refuses recurring masters. |
 
+## Supported date formats (write tools)
+
+Write tools accept these date formats. All are interpreted as **local wall-clock time**:
+
+| Format | Example | Notes |
+|--------|---------|-------|
+| `YYYY-MM-DD` | `2026-04-21` | Date-only, time defaults to 00:00:00. Use with `allDay: true` for full-day events. |
+| `YYYY-MM-DD HH:mm[:ss]` | `2026-04-21 15:00:00` | ISO-ish with space separator. 24-hour time. |
+| `YYYY-MM-DDTHH:mm[:ss]` | `2026-04-21T15:00:00` | ISO with T separator. 24-hour time. |
+| Natural language (24-hour) | `April 21, 2026 15:00:00` | Month-name datetime. |
+| Natural language (12-hour) | `April 21, 2026 3:00 PM` | Month-name with AM/PM. |
+| US slash | `4/21/2026 3:00 PM` | Slash-separated date. |
+
+**Rejected:** ISO strings with trailing `Z` or `±HH:mm` offset (e.g., `2026-04-21T15:00:00Z`). Convert to local wall-clock time before calling the tool.
+
+Since v0.2.2 all formats above are locale-safe; earlier versions silently truncated 24-hour times to midnight on US English macOS. See [CHANGELOG.md](./CHANGELOG.md) for the history and audit guidance.
+
 ## Write tool examples
 
 ### Responding to an invitation
