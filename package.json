@@ -1,7 +1,7 @@
 {
   "name": "apple-calendar-mcp",
-  "version": "0.1.0",
-  "description": "MCP server for reading Apple Calendar events across iCloud, Google, Exchange accounts via AppleScript",
+  "version": "0.2.0",
+  "description": "MCP server for reading and writing Apple Calendar events across iCloud, Google, Exchange accounts via AppleScript",
   "type": "module",
   "main": "build/index.js",
   "types": "build/index.d.ts",
