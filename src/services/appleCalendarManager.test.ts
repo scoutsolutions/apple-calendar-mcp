@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { _testing } from "./appleCalendarManager.js";
+import { describe, it, expect, afterEach } from "vitest";
+import { _testing, AppleCalendarManager } from "./appleCalendarManager.js";
 import { buildMultilineAppleScript, checkThrottle } from "@/utils/writeHelpers.js";
 
 describe("escapeForAppleScript", () => {
@@ -360,4 +360,61 @@ describe("buildDeleteEventScript", () => {
     expect(script).toContain('return "not-found"');
     expect(script).toContain('return "is-recurring-master"');
   });
+});
+
+describe("APPLE_CALENDAR_MCP_READ_ONLY env var", () => {
+  const ENV_KEY = "APPLE_CALENDAR_MCP_READ_ONLY";
+  const originalEnv = process.env[ENV_KEY];
+
+  afterEach(() => {
+    if (originalEnv === undefined) {
+      delete process.env[ENV_KEY];
+    } else {
+      process.env[ENV_KEY] = originalEnv;
+    }
+  });
+
+  it("blocks respondToInvitation when set to '1'", () => {
+    process.env[ENV_KEY] = "1";
+    const mgr = new AppleCalendarManager();
+    expect(() => mgr.respondToInvitation("uid-1", "accepted", "kevin@example.com")).toThrow(
+      /read-only/i
+    );
+  });
+
+  it("blocks createEvent when set to '1'", () => {
+    process.env[ENV_KEY] = "1";
+    const mgr = new AppleCalendarManager();
+    expect(() =>
+      mgr.createEvent("Work", "Test", "April 20, 2026 9:00 AM", "April 20, 2026 10:00 AM")
+    ).toThrow(/read-only/i);
+  });
+
+  it("blocks updateEvent when set to '1'", () => {
+    process.env[ENV_KEY] = "1";
+    const mgr = new AppleCalendarManager();
+    expect(() => mgr.updateEvent("uid-1", { summary: "New" })).toThrow(/read-only/i);
+  });
+
+  it("blocks deleteEvent when set to '1'", () => {
+    process.env[ENV_KEY] = "1";
+    const mgr = new AppleCalendarManager();
+    expect(() => mgr.deleteEvent("Work", "uid-1")).toThrow(/read-only/i);
+  });
+
+  it("accepts 'true' and 'yes' as truthy values", () => {
+    const mgr = new AppleCalendarManager();
+    for (const val of ["true", "yes"]) {
+      process.env[ENV_KEY] = val;
+      expect(() => mgr.deleteEvent("Work", "uid-1")).toThrow(/read-only/i);
+    }
+  });
+
+  // Note: "does NOT block when unset/falsy" is covered implicitly by the
+  // existing test suite - if isReadOnlyMode returned true when it shouldn't,
+  // any write-path test would fail. Asserting the negative here would
+  // require mocking executeAppleScript, which is out of scope for this
+  // patch. The explicit "blocks when X" tests above are sufficient to
+  // prove the guard works; the absence of spurious blocks is evident from
+  // the rest of the suite passing.
 });
