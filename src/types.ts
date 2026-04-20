@@ -85,3 +85,16 @@ export interface EventAttendee {
   /** Response status (accepted, declined, needs-action, etc.) */
   status: string;
 }
+
+// =============================================================================
+// Write Operation Types (v0.2.0+)
+// =============================================================================
+
+/** Valid participation statuses per RFC 5545 */
+export const PARTICIPATION_STATUSES = [
+  "accepted",
+  "declined",
+  "tentative",
+  "needs-action",
+] as const;
+export type ParticipationStatus = (typeof PARTICIPATION_STATUSES)[number];

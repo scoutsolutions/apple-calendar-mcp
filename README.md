@@ -20,6 +20,23 @@ If you already have an Exchange account configured in Apple Calendar, or an iClo
 | `get-event` | Full event details including attendees and meeting URLs |
 | `get-today` | Events for today across all calendars |
 | `get-this-week` | Events for the current week (Monday-Sunday) |
+| `respond-to-invitation` | Accept/decline/tentative an event invitation. NOTE: send-behavior varies by account type. |
+
+## Write tool examples
+
+### Responding to an invitation
+
+You received an invitation to "Q2 Planning" and want to accept:
+
+```
+list-events startDate="April 20, 2026 12:00 AM" endDate="April 20, 2026 11:59 PM" query="Q2 Planning"
+-> Returns event with UID "abc123"
+
+respond-to-invitation uid="abc123" status="accepted" userEmail="you@example.com"
+-> "Status updated to 'accepted' on event abc123."
+```
+
+**Important:** Whether the organizer receives your response email depends on your account type. iCloud reliably sends. Exchange and Google CalDAV behavior is inconsistent - the status updates locally and on the server but may not email the organizer. If confirmation matters, follow up separately.
 
 ## Requirements
 

@@ -392,6 +392,35 @@ server.tool(
 );
 
 // =============================================================================
+// Calendar Tools (write - v0.2.0+)
+// =============================================================================
+
+// --- respond-to-invitation ---
+
+server.tool(
+  "respond-to-invitation",
+  {
+    uid: EVENT_UID_SCHEMA.describe("Event UID (from list-events, search-events, or get-event)"),
+    status: PARTICIPATION_STATUS_SCHEMA.describe(
+      "Your response: accepted, declined, tentative, or needs-action. NOTE: Whether the organizer receives the response email depends on account type - iCloud reliably sends, Exchange/Google behavior is inconsistent."
+    ),
+    userEmail: EMAIL_SCHEMA.describe(
+      "Your email address as it appears on the invitation (identifies you among attendees)."
+    ),
+  },
+  withErrorHandling(({ uid, status, userEmail }) => {
+    const outcome = calendarManager.respondToInvitation(uid, status, userEmail);
+    const messages: Record<typeof outcome, string> = {
+      ok: `Status updated to "${status}" on event ${uid}.`,
+      "event-not-found": `Event ${uid} not found in any calendar.`,
+      "attendee-not-found": `Your email (${userEmail}) was not found among the event's attendees.`,
+      error: `An error occurred. See server logs for details.`,
+    };
+    return successResponse(messages[outcome]);
+  }, "Error responding to invitation")
+);
+
+// =============================================================================
 // Server Startup
 // =============================================================================
 

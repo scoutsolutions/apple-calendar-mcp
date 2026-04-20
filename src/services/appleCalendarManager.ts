@@ -10,7 +10,14 @@
  */
 
 import { executeAppleScript } from "@/utils/applescript.js";
-import type { AppleCalendar, CalendarEvent, CalendarEventDetail, EventAttendee } from "@/types.js";
+import { auditLog, buildMultilineAppleScript, isReadOnlyMode } from "@/utils/writeHelpers.js";
+import type {
+  AppleCalendar,
+  CalendarEvent,
+  CalendarEventDetail,
+  EventAttendee,
+  ParticipationStatus,
+} from "@/types.js";
 
 // =============================================================================
 // AppleScript Helpers
@@ -442,6 +449,184 @@ export class AppleCalendarManager {
   }
 
   // ===========================================================================
+  // Write Operations (v0.2.0+)
+  // ===========================================================================
+
+  /**
+   * Set the current user's participation status on an event.
+   *
+   * NOTE: Whether this sends a response email to the organizer depends on
+   * the calendar account type. iCloud reliably sends. Exchange and Google
+   * CalDAV behavior is inconsistent. Callers should verify via the
+   * organizer's view if confirmation matters.
+   *
+   * @returns "ok" | "event-not-found" | "attendee-not-found" | "error"
+   */
+  respondToInvitation(
+    uid: string,
+    status: ParticipationStatus,
+    userEmail: string
+  ): "ok" | "event-not-found" | "attendee-not-found" | "error" {
+    if (isReadOnlyMode()) {
+      throw new Error("Server is in read-only mode (APPLE_CALENDAR_MCP_READ_ONLY set)");
+    }
+
+    const script = buildRespondScript(uid, userEmail, status);
+    const result = executeAppleScript(script, { timeoutMs: 60000 });
+
+    auditLog("respond-to-invitation", {
+      uid,
+      status,
+      userEmail,
+      result: result.output,
+    });
+
+    if (!result.success) return "error";
+    if (result.output === "ok") return "ok";
+    if (result.output === "event-not-found") return "event-not-found";
+    if (result.output === "attendee-not-found") return "attendee-not-found";
+    return "error";
+  }
+
+  /**
+   * Create a new event in the specified calendar.
+   *
+   * IMPORTANT: AppleScript cannot provision Teams/Zoom/Meet meeting URLs.
+   * For events that need online meeting integration, use the native
+   * calendar platform's tool (Outlook, Google Calendar).
+   *
+   * Calendar must be writable and unambiguous. resolveWritableCalendar is
+   * called first; if it returns null, the create is refused.
+   *
+   * @returns UID of the created event, or null on failure
+   */
+  createEvent(
+    calendarName: string,
+    summary: string,
+    startDate: string,
+    endDate: string,
+    options: {
+      location?: string;
+      description?: string;
+      url?: string;
+      allDay?: boolean;
+    } = {}
+  ): string | null {
+    if (isReadOnlyMode()) {
+      throw new Error("Server is in read-only mode (APPLE_CALENDAR_MCP_READ_ONLY set)");
+    }
+
+    const resolved = this.resolveWritableCalendar(calendarName);
+    if (!resolved) {
+      auditLog("create-event", {
+        calendarName,
+        summary,
+        result: "calendar-not-resolved",
+      });
+      return null;
+    }
+
+    const script = buildCreateEventScript(calendarName, summary, startDate, endDate, options);
+    const result = executeAppleScript(script, { timeoutMs: 60000 });
+
+    auditLog("create-event", {
+      calendarName,
+      summary,
+      result: result.success ? result.output : result.error,
+    });
+
+    if (!result.success || result.output.startsWith("error:") || !result.output.trim()) {
+      return null;
+    }
+    return result.output.trim();
+  }
+
+  /**
+   * Update properties on an existing event.
+   *
+   * Passes only the fields provided. An empty string for a field clears it
+   * (rather than "no change") - callers who want to preserve a field should
+   * omit it entirely.
+   *
+   * Searches all calendars for the UID. If the UID matches multiple events
+   * (rare but possible with imported ICS), only the first is updated.
+   */
+  updateEvent(
+    uid: string,
+    updates: {
+      summary?: string;
+      startDate?: string;
+      endDate?: string;
+      location?: string;
+      description?: string;
+      url?: string;
+    }
+  ): boolean {
+    if (isReadOnlyMode()) {
+      throw new Error("Server is in read-only mode (APPLE_CALENDAR_MCP_READ_ONLY set)");
+    }
+
+    const script = buildUpdateEventScript(uid, updates);
+    if (script === null) return true; // no-op: nothing to update
+
+    const result = executeAppleScript(script, { timeoutMs: 60000 });
+
+    auditLog("update-event", {
+      uid,
+      fields: Object.keys(updates)
+        .filter((k) => updates[k as keyof typeof updates] !== undefined)
+        .join(","),
+      result: result.output,
+    });
+
+    return result.success && result.output === "ok";
+  }
+
+  /**
+   * Delete an event. Scoped to a specific calendar for safety.
+   *
+   * Refuses to delete recurring event masters - those would remove the
+   * entire series silently. Callers who really want to delete a series
+   * must do it through Calendar.app (which prompts for "this event only"
+   * vs "all events").
+   *
+   * Recoverability depends on the source account:
+   * - iCloud: event moves to iCloud Trash, recoverable for ~30 days
+   * - Exchange: goes to the account's Deleted Items
+   * - Google: trash, recoverable for ~30 days
+   * - Local-only calendars: permanently deleted
+   */
+  deleteEvent(
+    calendarName: string,
+    uid: string
+  ): "ok" | "not-found" | "is-recurring-master" | "error" {
+    if (isReadOnlyMode()) {
+      throw new Error("Server is in read-only mode (APPLE_CALENDAR_MCP_READ_ONLY set)");
+    }
+
+    const resolved = this.resolveWritableCalendar(calendarName);
+    if (!resolved) {
+      auditLog("delete-event", { calendarName, uid, result: "calendar-not-resolved" });
+      return "not-found";
+    }
+
+    const script = buildDeleteEventScript(calendarName, uid);
+    const result = executeAppleScript(script, { timeoutMs: 60000 });
+
+    auditLog("delete-event", {
+      calendarName,
+      uid,
+      result: result.output.split("|||")[0] || result.error,
+    });
+
+    if (!result.success) return "error";
+    if (result.output.startsWith("ok")) return "ok";
+    if (result.output === "not-found") return "not-found";
+    if (result.output === "is-recurring-master") return "is-recurring-master";
+    return "error";
+  }
+
+  // ===========================================================================
   // Private Helpers
   // ===========================================================================
 
@@ -535,6 +720,191 @@ function stripControlChars(s: string): string {
   return s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
 }
 
+// =============================================================================
+// Write Operation Script Builders (v0.2.0+)
+//
+// Script generation is extracted as pure functions so snapshot tests can
+// assert on the generated AppleScript without running osascript.
+// =============================================================================
+
+/**
+ * Map ParticipationStatus enum -> AppleScript participation status constant.
+ * Defined as a lookup table (not direct interpolation) so adding a new
+ * enum value is a compile error until the mapping is updated.
+ */
+const PARTICIPATION_STATUS_APPLESCRIPT: Record<ParticipationStatus, string> = {
+  accepted: "accepted",
+  declined: "declined",
+  tentative: "tentative",
+  "needs-action": "needs action", // AppleScript uses space
+};
+
+/**
+ * Build the AppleScript for respond-to-invitation.
+ * Extracted for snapshot testing.
+ */
+function buildRespondScript(uid: string, userEmail: string, status: ParticipationStatus): string {
+  const uidEsc = escapeForAppleScript(uid);
+  const emailEsc = escapeForAppleScript(userEmail);
+  const asStatus = PARTICIPATION_STATUS_APPLESCRIPT[status];
+
+  return buildCalendarScript(`
+    try
+      repeat with c in calendars
+        try
+          set matches to (every event of c whose uid is "${uidEsc}")
+          if (count of matches) > 0 then
+            set e to item 1 of matches
+            repeat with a in attendees of e
+              try
+                set aEmail to email of a
+                if aEmail is "${emailEsc}" then
+                  set participation status of a to ${asStatus}
+                  return "ok"
+                end if
+              end try
+            end repeat
+            return "attendee-not-found"
+          end if
+        end try
+      end repeat
+      return "event-not-found"
+    on error errMsg
+      return "error:" & errMsg
+    end try
+  `);
+}
+
+/** Build create-event script. */
+function buildCreateEventScript(
+  calendarName: string,
+  summary: string,
+  startDate: string,
+  endDate: string,
+  options: {
+    location?: string;
+    description?: string;
+    url?: string;
+    allDay?: boolean;
+  } = {}
+): string {
+  const calEsc = escapeForAppleScript(calendarName);
+  const summaryEsc = escapeForAppleScript(summary);
+  const startEsc = escapeForAppleScript(startDate);
+  const endEsc = escapeForAppleScript(endDate);
+  const allDay = options.allDay ? "true" : "false";
+
+  const props: string[] = [
+    `summary:"${summaryEsc}"`,
+    `start date:date "${startEsc}"`,
+    `end date:date "${endEsc}"`,
+    `allday event:${allDay}`,
+  ];
+  if (options.location !== undefined) {
+    props.push(`location:"${escapeForAppleScript(options.location)}"`);
+  }
+  if (options.description !== undefined) {
+    const descExpr = buildMultilineAppleScript(options.description, escapeForAppleScript);
+    props.push(`description:${descExpr}`);
+  }
+  if (options.url !== undefined) {
+    props.push(`url:"${escapeForAppleScript(options.url)}"`);
+  }
+
+  return buildCalendarScript(`
+    try
+      tell calendar "${calEsc}"
+        set newEvent to make new event with properties {${props.join(", ")}}
+        return uid of newEvent
+      end tell
+    on error errMsg
+      return "error:" & errMsg
+    end try
+  `);
+}
+
+/** Build update-event script. Returns null if no updates provided. */
+function buildUpdateEventScript(
+  uid: string,
+  updates: {
+    summary?: string;
+    startDate?: string;
+    endDate?: string;
+    location?: string;
+    description?: string;
+    url?: string;
+  }
+): string | null {
+  const uidEsc = escapeForAppleScript(uid);
+  const setters: string[] = [];
+  if (updates.summary !== undefined) {
+    setters.push(`set summary of e to "${escapeForAppleScript(updates.summary)}"`);
+  }
+  if (updates.startDate !== undefined) {
+    setters.push(`set start date of e to date "${escapeForAppleScript(updates.startDate)}"`);
+  }
+  if (updates.endDate !== undefined) {
+    setters.push(`set end date of e to date "${escapeForAppleScript(updates.endDate)}"`);
+  }
+  if (updates.location !== undefined) {
+    setters.push(`set location of e to "${escapeForAppleScript(updates.location)}"`);
+  }
+  if (updates.description !== undefined) {
+    const descExpr = buildMultilineAppleScript(updates.description, escapeForAppleScript);
+    setters.push(`set description of e to ${descExpr}`);
+  }
+  if (updates.url !== undefined) {
+    setters.push(`set url of e to "${escapeForAppleScript(updates.url)}"`);
+  }
+
+  if (setters.length === 0) return null;
+
+  return buildCalendarScript(`
+    try
+      repeat with c in calendars
+        try
+          set matches to (every event of c whose uid is "${uidEsc}")
+          if (count of matches) > 0 then
+            set e to item 1 of matches
+            ${setters.join("\n            ")}
+            return "ok"
+          end if
+        end try
+      end repeat
+      return "event-not-found"
+    on error errMsg
+      return "error:" & errMsg
+    end try
+  `);
+}
+
+/** Build delete-event script. */
+function buildDeleteEventScript(calendarName: string, uid: string): string {
+  const calEsc = escapeForAppleScript(calendarName);
+  const uidEsc = escapeForAppleScript(uid);
+
+  return buildCalendarScript(`
+    try
+      tell calendar "${calEsc}"
+        set matches to (every event whose uid is "${uidEsc}")
+        if (count of matches) = 0 then return "not-found"
+        set e to item 1 of matches
+        -- Reject recurring masters: presence of recurrence indicates series
+        try
+          set r to recurrence of e
+          if r is not missing value and r is not "" then return "is-recurring-master"
+        end try
+        set eSummary to summary of e
+        set eStart to (start date of e) as string
+        delete e
+        return "ok|||" & eSummary & "|||" & eStart
+      end tell
+    on error errMsg
+      return "error:" & errMsg
+    end try
+  `);
+}
+
 /**
  * Free-function implementation of parseEventList for unit testing.
  * Kept outside the class because it has no instance state.
@@ -568,4 +938,9 @@ export const _testing = {
   RECORD_SEP,
   parseEventList: parseEventListImpl,
   stripControlChars,
+  buildRespondScript,
+  buildCreateEventScript,
+  buildUpdateEventScript,
+  buildDeleteEventScript,
+  PARTICIPATION_STATUS_APPLESCRIPT,
 };

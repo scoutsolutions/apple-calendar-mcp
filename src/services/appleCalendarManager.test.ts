@@ -167,3 +167,33 @@ describe("checkThrottle", () => {
     expect(() => checkThrottle("test-over", 3)).toThrow(/Rate limit/);
   });
 });
+
+describe("buildRespondScript", () => {
+  it("maps accepted to AppleScript 'accepted' constant", () => {
+    const script = _testing.buildRespondScript("event-123", "me@example.com", "accepted");
+    expect(script).toContain('tell application "Calendar"');
+    expect(script).toContain("set participation status of a to accepted");
+    expect(script).toContain('uid is "event-123"');
+    expect(script).toContain('aEmail is "me@example.com"');
+  });
+
+  it("maps needs-action to AppleScript 'needs action' (with space)", () => {
+    const script = _testing.buildRespondScript("e1", "u@x.com", "needs-action");
+    expect(script).toContain("set participation status of a to needs action");
+  });
+
+  it("escapes quotes in uid and email", () => {
+    const script = _testing.buildRespondScript("uid-with-quote", "weird@x.com", "declined");
+    expect(script).toContain('uid is "uid-with-quote"');
+    expect(script).toContain('aEmail is "weird@x.com"');
+  });
+
+  it("lookup table maps all four status values correctly", () => {
+    expect(_testing.PARTICIPATION_STATUS_APPLESCRIPT).toEqual({
+      accepted: "accepted",
+      declined: "declined",
+      tentative: "tentative",
+      "needs-action": "needs action",
+    });
+  });
+});
