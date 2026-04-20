@@ -86,6 +86,7 @@ Two rounds of adversarial review before any code shipped. See `docs/superpowers/
 - **Recurring event support is read-only.** Creating, updating, or deleting recurring series is not supported - too complex for v0.2.0. Single-occurrence events handled fully.
 - **Audit log is stderr-only.** No persistent file log. Users who want retained audit trails should redirect stderr.
 - **No cryptographic signature on writes.** A malicious MCP host could substitute our process. Out of scope - trust boundary is the MCP host.
+- **Recurring-master detection is best-effort.** The `delete-event` tool refuses to delete recurring event masters, detected via `recurrence of e` in AppleScript comparing against `missing value` and empty string. Complex recurrence objects or non-standard recurrence metadata from some calendar servers may not match this check cleanly. A recurring master that slipped through the check would be deleted as a single event, potentially removing all its occurrences. Users with complex recurring events should delete via Calendar.app, which has more robust recurrence handling. Will be improved in a future release if cases where the check fails are identified.
 
 ### What's NOT protected
 (Same as v0.1.0, plus:)

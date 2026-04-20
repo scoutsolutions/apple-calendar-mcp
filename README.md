@@ -260,7 +260,7 @@ npm test
 npm run build
 ```
 
-Tests cover the input validation and parsing logic. AppleScript-level behavior requires a running Mail.app with accounts configured, so is tested interactively rather than in CI.
+Tests cover the Zod schemas, script builders (snapshot tests against generated AppleScript), parsing helpers, and write-helper utilities. AppleScript-level behavior requires a running Calendar.app with accounts configured, so is tested interactively rather than in CI.
 
 ## License
 

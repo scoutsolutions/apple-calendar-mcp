@@ -24,154 +24,20 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { AppleCalendarManager } from "@/services/appleCalendarManager.js";
 import { checkThrottle } from "@/utils/writeHelpers.js";
-
-// =============================================================================
-// Input Validation Schemas
-// =============================================================================
-
-/** Date strings must look like natural-language dates (e.g. "April 20, 2026 12:00 AM").
- *  Block characters that could escape an AppleScript `date "..."` literal. */
-const REQUIRED_DATE_SCHEMA = z
-  .string()
-  .regex(
-    /^[a-zA-Z0-9 ,/\-:]+$/,
-    "Date must contain only alphanumeric characters, spaces, commas, slashes, hyphens, and colons"
-  )
-  .refine((val) => !isNaN(new Date(val).getTime()), {
-    message: "Date string must be a valid date (e.g., 'January 1, 2026' or '2026-03-15')",
-  });
-
-/** Calendar names are free-form text from Apple Calendar. Reject control chars,
- *  double quote, and backslash to prevent AppleScript literal breakout. */
-const CALENDAR_NAME_SCHEMA = z
-  .string()
-  .min(1)
-  .max(200)
-  .regex(
-    // eslint-disable-next-line no-control-regex
-    /^[^\x00-\x1F\x7F\\"]+$/,
-    "Calendar name must not contain control characters, backslash, or double quote"
-  );
-
-/** Event UIDs per RFC 5545 can be essentially any text. Real UIDs from Exchange
- *  and Outlook commonly contain '/', '+', '=', '{', '}'. So we constrain by
- *  rejecting only the dangerous chars rather than allowlisting a restricted
- *  charset that would break real-world UIDs. */
-const EVENT_UID_SCHEMA = z
-  .string()
-  .min(1)
-  .max(255)
-  .regex(
-    // eslint-disable-next-line no-control-regex
-    /^[^\x00-\x1F\x7F"\\]+$/,
-    "Event UID must not contain control characters, backslash, or double quote"
-  );
-
-/** Search queries are user-facing text. Allow most chars but reject control
- *  chars. Cap length to prevent pathological AppleScript construction. */
-const SEARCH_QUERY_SCHEMA = z
-  .string()
-  .min(1)
-  .max(500)
-  .regex(
-    // eslint-disable-next-line no-control-regex
-    /^[^\x00-\x1F\x7F]+$/,
-    "Search query must not contain control characters"
-  );
-
-/** Bounded integer limit for event listing. */
-const EVENT_LIMIT_SCHEMA = z.number().int().min(1).max(500);
-
-/** URL for event property. MUST be http or https - javascript:, file:, data:
- *  and other schemes are rejected because event URLs get rendered in
- *  various calendar clients (Outlook, Apple Calendar popovers, CalDAV
- *  viewers) where a javascript: URL is an XSS vector. */
-const URL_SCHEMA = z
-  .string()
-  .url()
-  .max(2000)
-  .refine(
-    (u) => {
-      try {
-        const proto = new URL(u).protocol;
-        return proto === "http:" || proto === "https:";
-      } catch {
-        return false;
-      }
-    },
-    { message: "URL must use http or https scheme" }
-  );
-
-/** Email address with @ excluded from both sides (prevents a@b@c),
- *  control chars rejected, whitespace rejected. IDN emails (non-ASCII)
- *  are NOT supported - Apple Calendar normalizes to punycode anyway. */
-const EMAIL_SCHEMA = z
-  .string()
-  .min(3)
-  .max(320)
-  .regex(
-    // eslint-disable-next-line no-control-regex
-    /^[^\x00-\x1F\x7F\\"\s@]+@[^\x00-\x1F\x7F\\"\s@]+$/,
-    "Must be a valid ASCII email address (no whitespace, no control characters, exactly one @)"
-  );
-
-/** Participation status enum per RFC 5545. Kept as an enum (not free
- *  string) so AppleScript constant mapping is explicit (see Task 1). */
-const PARTICIPATION_STATUS_SCHEMA = z.enum(["accepted", "declined", "tentative", "needs-action"]);
-
-/** Event summary (title). Single-line text, control chars rejected. */
-const EVENT_SUMMARY_SCHEMA = z
-  .string()
-  .min(1)
-  .max(500)
-  .regex(
-    // eslint-disable-next-line no-control-regex
-    /^[^\x00-\x1F\x7F]+$/,
-    "Event summary must not contain control characters or newlines"
-  );
-
-/** Event location. Single-line, allows empty (to clear a location). */
-const EVENT_LOCATION_SCHEMA = z
-  .string()
-  .max(500)
-  .regex(
-    // eslint-disable-next-line no-control-regex
-    /^[^\x00-\x1F\x7F]*$/,
-    "Location must not contain control characters or newlines"
-  );
-
-/** Event description. ALLOWS newlines (\n, \r\n, \r) - multi-line notes
- *  are legitimate. Rejects all other control chars. Handled via
- *  buildMultilineAppleScript in the service layer. */
-const EVENT_DESCRIPTION_SCHEMA = z
-  .string()
-  .max(5000)
-  .regex(
-    // eslint-disable-next-line no-control-regex
-    /^[^\x00-\x08\x0B\x0C\x0E-\x1F\x7F]*$/,
-    "Description may contain newlines but not other control characters"
-  );
-
-/** Tightened date schema. Rejects rolled-over dates ("Feb 30" -> Mar 2),
- *  bounds to a reasonable window to prevent typos landing years away. */
-const STRICT_DATE_SCHEMA = z
-  .string()
-  .regex(
-    /^[a-zA-Z0-9 ,/\-:]+$/,
-    "Date must contain only alphanumeric characters, spaces, commas, slashes, hyphens, and colons"
-  )
-  .refine((val) => !isNaN(new Date(val).getTime()), {
-    message: "Date string must be a valid date",
-  })
-  .refine(
-    (val) => {
-      const d = new Date(val);
-      const now = Date.now();
-      const fiftyYears = 50 * 365.25 * 24 * 60 * 60 * 1000;
-      return Math.abs(d.getTime() - now) < fiftyYears;
-    },
-    { message: "Date must be within 50 years of today" }
-  );
+import {
+  REQUIRED_DATE_SCHEMA,
+  STRICT_DATE_SCHEMA,
+  CALENDAR_NAME_SCHEMA,
+  EVENT_UID_SCHEMA,
+  SEARCH_QUERY_SCHEMA,
+  EVENT_LIMIT_SCHEMA,
+  URL_SCHEMA,
+  EMAIL_SCHEMA,
+  PARTICIPATION_STATUS_SCHEMA,
+  EVENT_SUMMARY_SCHEMA,
+  EVENT_LOCATION_SCHEMA,
+  EVENT_DESCRIPTION_SCHEMA,
+} from "@/schemas.js";
 
 // Read version from package.json to keep it in sync
 const require = createRequire(import.meta.url);
@@ -473,6 +339,9 @@ server.tool(
   "update-event",
   {
     uid: EVENT_UID_SCHEMA.describe("Event UID (from list-events, search-events, or get-event)"),
+    calendarName: CALENDAR_NAME_SCHEMA.optional().describe(
+      "Optional calendar name for scoped update. RECOMMENDED: when provided, the update is scoped to that specific calendar and refuses if the calendar is ambiguous or read-only. When omitted, searches all calendars by UID (backward compat with v0.2.0)."
+    ),
     summary: EVENT_SUMMARY_SCHEMA.optional().describe("New event title (omit to leave unchanged)"),
     startDate: STRICT_DATE_SCHEMA.optional().describe(
       "New start time (omit to leave unchanged). If provided with endDate, endDate must be strictly after."
@@ -488,32 +357,35 @@ server.tool(
     ),
     url: URL_SCHEMA.optional().describe("New URL, http or https only (omit to leave unchanged)"),
   },
-  withErrorHandling(({ uid, summary, startDate, endDate, location, description, url }) => {
-    // If both dates provided, enforce ordering
-    if (startDate && endDate && new Date(startDate).getTime() >= new Date(endDate).getTime()) {
-      return successResponse("endDate must be strictly after startDate");
-    }
-    const ok = calendarManager.updateEvent(uid, {
-      summary,
-      startDate,
-      endDate,
-      location,
-      description,
-      url,
-    });
-    if (!ok) {
-      return successResponse(
-        `Failed to update event ${uid}. The event may not exist, or an AppleScript error occurred. See server logs.`
+  withErrorHandling(
+    ({ uid, calendarName, summary, startDate, endDate, location, description, url }) => {
+      // If both dates provided, enforce ordering
+      if (startDate && endDate && new Date(startDate).getTime() >= new Date(endDate).getTime()) {
+        return successResponse("endDate must be strictly after startDate");
+      }
+      const ok = calendarManager.updateEvent(
+        uid,
+        { summary, startDate, endDate, location, description, url },
+        calendarName
       );
-    }
-    const changed = Object.entries({ summary, startDate, endDate, location, description, url })
-      .filter(([, v]) => v !== undefined)
-      .map(([k]) => k);
-    if (changed.length === 0) {
-      return successResponse(`No fields provided to update on event ${uid}.`);
-    }
-    return successResponse(`Updated event ${uid}. Fields changed: ${changed.join(", ")}.`);
-  }, "Error updating event")
+      if (!ok) {
+        const scoped = calendarName
+          ? ` (scoped to "${calendarName}" - check it exists, is writable, and is unambiguous)`
+          : "";
+        return successResponse(
+          `Failed to update event ${uid}${scoped}. The event may not exist, or an AppleScript error occurred. See server logs.`
+        );
+      }
+      const changed = Object.entries({ summary, startDate, endDate, location, description, url })
+        .filter(([, v]) => v !== undefined)
+        .map(([k]) => k);
+      if (changed.length === 0) {
+        return successResponse(`No fields provided to update on event ${uid}.`);
+      }
+      return successResponse(`Updated event ${uid}. Fields changed: ${changed.join(", ")}.`);
+    },
+    "Error updating event"
+  )
 );
 
 // --- delete-event ---
