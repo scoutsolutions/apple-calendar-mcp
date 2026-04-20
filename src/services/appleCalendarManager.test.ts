@@ -300,19 +300,44 @@ describe("buildUpdateEventScript", () => {
     expect(script).not.toContain("set location");
   });
 
-  it("builds reschedule update (both dates)", () => {
+  it("builds reschedule update (both dates) with safe-floor bookend", () => {
     const script = _testing.buildUpdateEventScript("uid-1", {
       startDate: "April 25, 2026 10:00 AM",
       endDate: "April 25, 2026 11:00 AM",
     })!;
-    // v0.2.2: dates are now built from components via buildAppleScriptDateBlock
+    // v0.2.2: dates built from components via buildAppleScriptDateBlock
+    // v0.2.3: safe-floor bookend when both dates are updated
+    expect(script).toContain("set safeFloorObj to (current date)");
+    expect(script).toContain("set year of safeFloorObj to 2000");
     expect(script).toContain("set startDateObj to (current date)");
     expect(script).toContain("set endDateObj to (current date)");
     expect(script).toContain("set day of startDateObj to 25");
     expect(script).toContain("set time of startDateObj to 36000"); // 10:00 AM
     expect(script).toContain("set time of endDateObj to 39600"); // 11:00 AM
+
+    // Ordering: start-to-floor, then end, then start-to-new
+    const floorIdx = script.indexOf("set start date of e to safeFloorObj");
+    const endIdx = script.indexOf("set end date of e to endDateObj");
+    const startIdx = script.indexOf("set start date of e to startDateObj");
+    expect(floorIdx).toBeGreaterThan(-1);
+    expect(endIdx).toBeGreaterThan(floorIdx);
+    expect(startIdx).toBeGreaterThan(endIdx);
+  });
+
+  it("single startDate update skips the safe-floor bookend", () => {
+    const script = _testing.buildUpdateEventScript("uid-1", {
+      startDate: "April 25, 2026 10:00 AM",
+    })!;
     expect(script).toContain("set start date of e to startDateObj");
+    expect(script).not.toContain("safeFloorObj");
+  });
+
+  it("single endDate update skips the safe-floor bookend", () => {
+    const script = _testing.buildUpdateEventScript("uid-1", {
+      endDate: "April 25, 2026 11:00 AM",
+    })!;
     expect(script).toContain("set end date of e to endDateObj");
+    expect(script).not.toContain("safeFloorObj");
   });
 
   it("clears location when empty string passed", () => {
